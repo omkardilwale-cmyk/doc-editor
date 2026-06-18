@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PdfUploader } from "./PdfUploader";
 import { PdfToolbar } from "./PdfToolbar";
 import { PdfPageCanvas } from "./PdfPageCanvas";
 import { loadPdfDocument } from "@/lib/pdf/pdfjs";
 import { downloadPdf, exportPdfWithAnnotations } from "@/lib/pdf/exportPdf";
+import { useEditorHistory } from "@/hooks/useEditorHistory";
 import type {
   Annotation,
   EditTool,
@@ -37,6 +38,64 @@ export function PdfEditor() {
   const [newTextDraft, setNewTextDraft] = useState<TextAnnotation | null>(null);
   const [pdfTextEdits, setPdfTextEdits] = useState<PdfTextEdit[]>([]);
 
+  const annotationsRef = useRef(annotations);
+  const pdfTextEditsRef = useRef(pdfTextEdits);
+  annotationsRef.current = annotations;
+  pdfTextEditsRef.current = pdfTextEdits;
+
+  const {
+    revision: historyRevision,
+    canUndo,
+    canRedo,
+    reset: resetHistory,
+    push: pushHistory,
+    undo,
+    redo,
+    beginRestore,
+    endRestore,
+  } = useEditorHistory();
+
+  const commitHistory = useCallback(() => {
+    queueMicrotask(() => {
+      pushHistory({
+        annotations: annotationsRef.current,
+        pdfTextEdits: pdfTextEditsRef.current,
+      });
+    });
+  }, [pushHistory]);
+
+  const clearTransientEditing = useCallback(() => {
+    setSelectedAnnotationId(null);
+    setEditingTextId(null);
+    setEditingPdfTextId(null);
+    setNewTextDraft(null);
+  }, []);
+
+  const applySnapshot = useCallback(
+    (snapshot: { annotations: Annotation[]; pdfTextEdits: PdfTextEdit[] }) => {
+      beginRestore();
+      setAnnotations(snapshot.annotations);
+      setPdfTextEdits(snapshot.pdfTextEdits);
+      clearTransientEditing();
+      queueMicrotask(() => endRestore());
+    },
+    [beginRestore, clearTransientEditing, endRestore],
+  );
+
+  const handleUndo = useCallback(() => {
+    const snapshot = undo();
+    if (!snapshot) return;
+    applySnapshot(snapshot);
+  }, [applySnapshot, undo]);
+
+  const handleRedo = useCallback(() => {
+    const snapshot = redo();
+    if (!snapshot) return;
+    applySnapshot(snapshot);
+  }, [applySnapshot, redo]);
+
+  void historyRevision;
+
   const selectedAnnotation =
     annotations.find((a) => a.id === selectedAnnotationId) ??
     (newTextDraft?.id === selectedAnnotationId ? newTextDraft : undefined);
@@ -57,7 +116,8 @@ export function PdfEditor() {
     setPdfTextEdits([]);
     setSavedBlob(null);
     setStatusMessage(null);
-  }, []);
+    resetHistory({ annotations: [], pdfTextEdits: [] });
+  }, [resetHistory]);
 
   const handleDimensions = useCallback((pageIndex: number, dims: PageDimensions) => {
     setPageDimensions((prev) => {
@@ -77,7 +137,8 @@ export function PdfEditor() {
     setSelectedAnnotationId(null);
     setEditingTextId(null);
     setNewTextDraft(null);
-  }, [selectedAnnotationId]);
+    commitHistory();
+  }, [selectedAnnotationId, commitHistory]);
 
   const resetEditor = () => {
     setFile(null);
@@ -93,14 +154,26 @@ export function PdfEditor() {
     setPdfTextEdits([]);
     setSavedBlob(null);
     setStatusMessage(null);
+    resetHistory({ annotations: [], pdfTextEdits: [] });
   };
 
-  const handlePdfTextEdit = useCallback((edit: PdfTextEdit) => {
-    setPdfTextEdits((prev) => {
-      const without = prev.filter((e) => e.itemId !== edit.itemId);
-      return edit.newText === edit.originalText ? without : [...without, edit];
-    });
-  }, []);
+  const handlePdfTextEdit = useCallback(
+    (edit: PdfTextEdit) => {
+      setPdfTextEdits((prev) => {
+        const without = prev.filter((e) => e.itemId !== edit.itemId);
+        const next =
+          edit.newText === edit.originalText ? without : [...without, edit];
+        queueMicrotask(() => {
+          pushHistory({
+            annotations: annotationsRef.current,
+            pdfTextEdits: next,
+          });
+        });
+        return next;
+      });
+    },
+    [pushHistory],
+  );
 
   const handleColorChange = (newColor: string) => {
     setColor(newColor);
@@ -120,6 +193,7 @@ export function PdfEditor() {
         return a;
       }),
     );
+    commitHistory();
   };
 
   const handleFontSizeChange = (newSize: number) => {
@@ -146,6 +220,7 @@ export function PdfEditor() {
         };
       }),
     );
+    commitHistory();
   };
 
   const handleEditSelectedText = () => {
@@ -271,6 +346,14 @@ export function PdfEditor() {
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
 
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+        return;
+      }
+
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       if (!selectedAnnotationId || editingTextId || isTyping) return;
       e.preventDefault();
@@ -278,7 +361,13 @@ export function PdfEditor() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedAnnotationId, editingTextId, deleteSelectedAnnotation]);
+  }, [
+    selectedAnnotationId,
+    editingTextId,
+    deleteSelectedAnnotation,
+    handleUndo,
+    handleRedo,
+  ]);
 
   useEffect(() => {
     if (!statusMessage) return;
@@ -314,6 +403,10 @@ export function PdfEditor() {
         selectedAnnotation={selectedAnnotation ?? null}
         onEditSelectedText={handleEditSelectedText}
         onDeleteSelected={deleteSelectedAnnotation}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
       />
 
       {statusMessage && (
@@ -351,6 +444,7 @@ export function PdfEditor() {
               onEditingPdfTextIdChange={setEditingPdfTextId}
               pageDimensions={pageDimensions[i]}
               onApplyTextStyle={handleApplyTextStyle}
+              onHistoryCommit={commitHistory}
             />
           ))}
         </div>

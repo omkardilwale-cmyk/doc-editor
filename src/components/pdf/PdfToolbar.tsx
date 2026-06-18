@@ -95,6 +95,10 @@ interface PdfToolbarProps {
   selectedAnnotation: Annotation | null;
   onEditSelectedText: () => void;
   onDeleteSelected: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
 export function PdfToolbar({
@@ -117,6 +121,10 @@ export function PdfToolbar({
   selectedAnnotation,
   onEditSelectedText,
   onDeleteSelected,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }: PdfToolbarProps) {
   return (
     <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-blur">
@@ -143,6 +151,37 @@ export function PdfToolbar({
               </button>
             </ToolbarTooltip>
           ))}
+        </div>
+
+        <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1">
+          <ToolbarTooltip
+            label="Undo"
+            description="Undo last change (⌘Z / Ctrl+Z)"
+          >
+            <button
+              type="button"
+              aria-label="Undo"
+              disabled={!canUndo}
+              onClick={onUndo}
+              className="rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ↶
+            </button>
+          </ToolbarTooltip>
+          <ToolbarTooltip
+            label="Redo"
+            description="Redo (⌘⇧Z / Ctrl+Shift+Z)"
+          >
+            <button
+              type="button"
+              aria-label="Redo"
+              disabled={!canRedo}
+              onClick={onRedo}
+              className="rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ↷
+            </button>
+          </ToolbarTooltip>
         </div>
 
         <label className="flex items-center gap-2 text-sm text-zinc-600">

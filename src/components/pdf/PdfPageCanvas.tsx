@@ -23,6 +23,8 @@ import {
   measureCanvasTextWidth,
 } from "@/lib/pdf/extractPdfText";
 import { inheritTextPlacementFromPdf } from "@/lib/pdf/textStyle";
+import { editStyleFromItem } from "@/lib/pdf/pdfTextStyle";
+import { sampleTextColorFromCanvas } from "@/lib/pdf/sampleTextColor";
 import { TextAnnotationOverlay } from "./TextAnnotationOverlay";
 import { PdfNativeTextInput } from "./PdfNativeTextInput";
 import type { PdfTextEdit, PdfTextItem } from "@/types/pdfText";
@@ -70,6 +72,7 @@ interface PdfPageCanvasProps {
   onEditingPdfTextIdChange: (id: string | null) => void;
   pageDimensions: PageDimensions | undefined;
   onApplyTextStyle: (style: { fontSize: number; color: string }) => void;
+  onHistoryCommit: () => void;
 }
 
 export function PdfPageCanvas({
@@ -97,6 +100,7 @@ export function PdfPageCanvas({
   onEditingPdfTextIdChange,
   pageDimensions,
   onApplyTextStyle,
+  onHistoryCommit,
 }: PdfPageCanvasProps) {
   const pdfCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -118,6 +122,7 @@ export function PdfPageCanvas({
   const renderGenerationRef = useRef(0);
   const [isVisible, setIsVisible] = useState(false);
   const [pdfTextItems, setPdfTextItems] = useState<PdfTextItem[]>([]);
+  const textColorByIdRef = useRef<Map<string, string>>(new Map());
   const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
 
   const pageAnnotations = annotations.filter((a) => a.pageIndex === pageIndex);
@@ -245,6 +250,7 @@ export function PdfPageCanvas({
       }
       onEditingTextIdChange(null);
       onNewTextDraftChange(null);
+      onHistoryCommit();
       return;
     }
 
@@ -256,6 +262,7 @@ export function PdfPageCanvas({
     }
 
     onEditingTextIdChange(null);
+    onHistoryCommit();
   };
 
   const cancelTextEdit = () => {
@@ -292,6 +299,16 @@ export function PdfPageCanvas({
   );
 
   const startPdfTextEdit = (item: PdfTextItem) => {
+    const existingEdit = pdfTextEdits.find((e) => e.itemId === item.id);
+    const style = editStyleFromItem(item, existingEdit);
+
+    textColorByIdRef.current.set(item.id, style.color!);
+    setPdfTextItems((prev) =>
+      prev.map((entry) =>
+        entry.id === item.id ? { ...entry, ...style } : entry,
+      ),
+    );
+
     onActivatePage();
     onEditingPdfTextIdChange(item.id);
     onSelectAnnotation(null);
@@ -311,14 +328,20 @@ export function PdfPageCanvas({
     }
 
     const existingEdit = pdfTextEdits.find((e) => e.itemId === editingPdfItem.id);
+    const style = editStyleFromItem(editingPdfItem, existingEdit);
+    const fontMetrics = {
+      fontFamily: style.fontFamily!,
+      fontBold: style.fontBold!,
+      fontItalic: style.fontItalic!,
+    };
     const coverWidth = Math.max(
       editingPdfItem.sourceWidth,
-      measureCanvasTextWidth(trimmed, editingPdfItem.fontSize),
+      measureCanvasTextWidth(trimmed, editingPdfItem.fontSize, fontMetrics),
       existingEdit?.canvasCoverWidth ?? 0,
     );
     const pdfCoverWidth = Math.max(
       editingPdfItem.pdfWidth,
-      measureCanvasTextWidth(trimmed, editingPdfItem.pdfFontSize),
+      measureCanvasTextWidth(trimmed, editingPdfItem.pdfFontSize, fontMetrics),
       existingEdit?.pdfCoverWidth ?? editingPdfItem.pdfWidth,
     );
 
@@ -327,6 +350,7 @@ export function PdfPageCanvas({
       pageIndex,
       originalText: editingPdfItem.sourceText,
       newText: trimmed,
+      ...style,
       pdfX: editingPdfItem.pdfX,
       pdfBaselineY: editingPdfItem.pdfBaselineY,
       pdfFontSize: editingPdfItem.pdfFontSize,
@@ -363,9 +387,10 @@ export function PdfPageCanvas({
         return {
           ...item,
           text: trimmed,
+          ...style,
           width: Math.max(
             item.sourceWidth,
-            measureCanvasTextWidth(trimmed, item.fontSize),
+            measureCanvasTextWidth(trimmed, item.fontSize, fontMetrics),
           ),
         };
       }),
@@ -426,15 +451,39 @@ export function PdfPageCanvas({
         const textItems = await extractPageTextItems(pdf, pageIndex, scale);
         if (cancelled || generation !== renderGenerationRef.current) return;
 
-        const mergedItems = textItems.map((item) => {
+        const ctx = canvas.getContext("2d");
+        const coloredItems =
+          ctx && typeof ImageData !== "undefined"
+            ? textItems.map((item) => {
+                const cached = textColorByIdRef.current.get(item.id);
+                const edit = pdfTextEdits.find((e) => e.itemId === item.id);
+                if (edit?.color) {
+                  textColorByIdRef.current.set(item.id, edit.color);
+                  return { ...item, color: edit.color };
+                }
+                if (cached) return { ...item, color: cached };
+                const sampled = sampleTextColorFromCanvas(ctx, item);
+                textColorByIdRef.current.set(item.id, sampled);
+                return { ...item, color: sampled };
+              })
+            : textItems;
+
+        const mergedItems = coloredItems.map((item) => {
           const edit = pdfTextEdits.find((e) => e.itemId === item.id);
           if (!edit) return item;
+          const style = editStyleFromItem(item, edit);
+          textColorByIdRef.current.set(item.id, style.color!);
           return {
             ...item,
             text: edit.newText,
+            ...style,
             width: Math.max(
               item.sourceWidth,
-              measureCanvasTextWidth(edit.newText, item.fontSize),
+              measureCanvasTextWidth(edit.newText, item.fontSize, {
+                fontFamily: style.fontFamily!,
+                fontBold: style.fontBold!,
+                fontItalic: style.fontItalic!,
+              }),
             ),
           };
         });
@@ -510,6 +559,7 @@ export function PdfPageCanvas({
         removeAnnotation(hit.id);
         if (selectedAnnotationId === hit.id) onSelectAnnotation(null);
         if (editingTextId === hit.id) onEditingTextIdChange(null);
+        onHistoryCommit();
       }
       return;
     }
@@ -657,6 +707,7 @@ export function PdfPageCanvas({
 
     if (dragState) {
       setDragState(null);
+      onHistoryCommit();
       return;
     }
 
@@ -667,6 +718,7 @@ export function PdfPageCanvas({
       const annotation = { ...highlightDraft, id: uuid() };
       addAnnotation(annotation);
       onSelectAnnotation(annotation.id);
+      onHistoryCommit();
     }
     setHighlightStart(null);
     setHighlightDraft(null);
@@ -681,6 +733,7 @@ export function PdfPageCanvas({
         strokeWidth: 2,
       });
       onSelectAnnotation(currentDrawId.current);
+      onHistoryCommit();
     }
     setDraftPoints([]);
     currentDrawId.current = null;
@@ -757,6 +810,7 @@ export function PdfPageCanvas({
             onPositionChange={(x, y) =>
               updateTextPosition(editingAnnotation.id, x, y)
             }
+            onPositionCommit={onHistoryCommit}
           />
         )}
         {selectedTextAnnotation && (
@@ -766,6 +820,7 @@ export function PdfPageCanvas({
             onPositionChange={(x, y) =>
               updateTextPosition(selectedTextAnnotation.id, x, y)
             }
+            onPositionCommit={onHistoryCommit}
           />
         )}
         <div className="pointer-events-none absolute -left-10 top-0 flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-xs font-medium text-white">

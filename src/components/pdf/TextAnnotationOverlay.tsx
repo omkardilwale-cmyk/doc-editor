@@ -12,6 +12,7 @@ interface TextAnnotationOverlayProps {
   onCommit?: (text: string) => void;
   onCancel?: () => void;
   onPositionChange: (x: number, y: number) => void;
+  onPositionCommit?: () => void;
 }
 
 export function TextAnnotationOverlay({
@@ -21,6 +22,7 @@ export function TextAnnotationOverlay({
   onCommit,
   onCancel,
   onPositionChange,
+  onPositionCommit,
 }: TextAnnotationOverlayProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(false);
@@ -90,8 +92,14 @@ export function TextAnnotationOverlay({
 
   const handleDragPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (!dragRef.current) return;
+    const moved =
+      Math.hypot(
+        e.clientX - dragRef.current.startX,
+        e.clientY - dragRef.current.startY,
+      ) > 2;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
+    if (moved) onPositionCommit?.();
   };
 
   const textWidth = measureCanvasTextWidth(
