@@ -64,7 +64,9 @@ export async function renderPageToCanvas(
   displayCanvas.width = viewport.width;
   displayCanvas.height = viewport.height;
 
-  const displayContext = displayCanvas.getContext("2d");
+  const displayContext = displayCanvas.getContext("2d", {
+    willReadFrequently: true,
+  });
   if (!displayContext) {
     throw new Error("Could not get display canvas context");
   }

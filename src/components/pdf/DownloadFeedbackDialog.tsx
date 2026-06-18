@@ -105,11 +105,13 @@ export function DownloadFeedbackDialog({
           </p>
         </div>
 
-        <label className="mt-4 block">
+        <label htmlFor="download-feedback-comment" className="mt-4 block">
           <span className="text-sm font-medium text-zinc-700">
             Comments <span className="font-normal text-zinc-400">(optional)</span>
           </span>
           <textarea
+            id="download-feedback-comment"
+            name="download-feedback-comment"
             value={comment}
             onChange={(event) => setComment(event.target.value)}
             disabled={busy}

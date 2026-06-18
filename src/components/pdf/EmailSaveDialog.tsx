@@ -79,6 +79,7 @@ export function EmailSaveDialog({
           <input
             ref={inputRef}
             id="save-email"
+            name="email"
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}

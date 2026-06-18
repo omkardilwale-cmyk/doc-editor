@@ -172,6 +172,8 @@ export const TextAnnotationOverlay = forwardRef<
         {isEditing ? (
           <input
             ref={inputRef}
+            id={`text-annotation-edit-${annotation.id}`}
+            name={`text-annotation-edit-${annotation.id}`}
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}

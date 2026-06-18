@@ -7,6 +7,7 @@ import type { PdfTextEdit, PdfTextItem } from "@/types/pdfText";
 export interface PdfTextEditSession {
   canvasFontSize: number;
   pdfFontSize: number;
+  previewCoverWidth: number;
 }
 
 export function createPdfTextEdit(
@@ -70,7 +71,7 @@ export function createPdfTextEdit(
     canvasX: item.x,
     canvasY: item.y,
     canvasWidth: item.sourceWidth,
-    canvasHeight: draft.fontSize * 1.05,
+    canvasHeight: draft.fontSize * 1.1,
     canvasFontSize: draft.fontSize,
     canvasBaselineY: item.canvasBaselineY,
     canvasViewportWidth: pageDimensions?.width ?? item.width,

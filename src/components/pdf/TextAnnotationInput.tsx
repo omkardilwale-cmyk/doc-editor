@@ -50,6 +50,8 @@ export function TextAnnotationInput({
   return (
     <input
       ref={inputRef}
+      id={`text-annotation-${annotation.id}`}
+      name={`text-annotation-${annotation.id}`}
       type="text"
       defaultValue={annotation.text}
       placeholder={isNew ? "Type here…" : undefined}

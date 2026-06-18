@@ -126,6 +126,8 @@ export function PdfUploader({ onFileSelect, onOpenDocument }: PdfUploaderProps) 
         </span>
         <input
           ref={inputRef}
+          id="pdf-file-upload"
+          name="pdf"
           type="file"
           accept="application/pdf"
           className="hidden"

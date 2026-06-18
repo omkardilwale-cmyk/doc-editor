@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { DownloadFeedbackDialog } from "./DownloadFeedbackDialog";
@@ -20,6 +20,18 @@ import {
 } from "@/lib/api/documents";
 import { submitDownloadFeedback } from "@/lib/api/feedback";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
+import { useEditorDraft } from "@/hooks/useEditorDraft";
+import {
+  clearEditorDraft,
+  dismissEditorDraft,
+  documentKeyForCloud,
+  documentKeyForUpload,
+  findEditorDraft,
+  hashPdfBytes,
+  readActiveEditorDraft,
+  resolveUserStorageKey,
+} from "@/lib/editor/editorDraft";
+import type { EditorDraft } from "@/lib/editor/editorDraft";
 import { useUserEmail } from "@/hooks/useUserEmail";
 import type {
   Annotation,
@@ -59,17 +71,40 @@ export function PdfEditor() {
   const [newTextDraft, setNewTextDraft] = useState<TextAnnotation | null>(null);
   const [pdfTextEdits, setPdfTextEdits] = useState<PdfTextEdit[]>([]);
   const [documentId, setDocumentId] = useState<string | null>(urlDocumentId);
+  const [documentKey, setDocumentKey] = useState<string | null>(null);
+  const [fileHash, setFileHash] = useState<string | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(
     () => Boolean(urlDocumentId),
   );
+
+  const userKey = useMemo(() => resolveUserStorageKey(email), [email]);
 
   const annotationsRef = useRef(annotations);
   const pdfTextEditsRef = useRef(pdfTextEdits);
   const pageCanvasRefs = useRef<(PdfPageCanvasHandle | null)[]>([]);
   const loadedDocumentIdRef = useRef<string | null>(null);
   const hasAutoScaledRef = useRef(false);
+  const sessionRestoreRef = useRef(false);
   annotationsRef.current = annotations;
   pdfTextEditsRef.current = pdfTextEdits;
+
+  const { clearDraft } = useEditorDraft({
+    userKey,
+    documentKey,
+    fileHash,
+    file,
+    pdfBytes,
+    documentId,
+    annotations,
+    pdfTextEdits,
+    pageDimensions,
+    currentPage,
+    scale,
+    tool,
+    color,
+    fontSize,
+    pageCanvasRefs,
+  });
 
   const {
     revision: historyRevision,
@@ -137,16 +172,32 @@ export function PdfEditor() {
         annotations?: Annotation[];
         pdfTextEdits?: PdfTextEdit[];
         pageDimensions?: PageDimensions[];
+        fileHash?: string;
+        documentKey?: string;
+        ui?: Pick<
+          EditorDraft,
+          "currentPage" | "scale" | "tool" | "color" | "fontSize"
+        >;
+        preserveStatusMessage?: boolean;
       },
     ) => {
+      const hash = options?.fileHash ?? (await hashPdfBytes(bytes));
+      const docKey =
+        options?.documentKey ??
+        (options?.documentId
+          ? documentKeyForCloud(options.documentId)
+          : documentKeyForUpload(hash));
+
       const doc = await loadPdfDocument(bytes.slice(0));
       const pdfFile = new File([bytes], name, { type: "application/pdf" });
       setFile(pdfFile);
       setPdfBytes(bytes);
       setPdf(doc);
+      setFileHash(hash);
+      setDocumentKey(docKey);
       setAnnotations(options?.annotations ?? []);
       setPageDimensions(options?.pageDimensions ?? []);
-      setCurrentPage(0);
+      setCurrentPage(options?.ui?.currentPage ?? 0);
       setSelectedAnnotationId(null);
       setEditingTextId(null);
       setEditingPdfTextId(null);
@@ -154,9 +205,17 @@ export function PdfEditor() {
       setPdfTextEdits(options?.pdfTextEdits ?? []);
       setDocumentId(options?.documentId ?? null);
       loadedDocumentIdRef.current = options?.documentId ?? null;
-      hasAutoScaledRef.current = false;
+      hasAutoScaledRef.current = Boolean(options?.ui);
+      if (options?.ui) {
+        setScale(options.ui.scale);
+        setTool(options.ui.tool);
+        setColor(options.ui.color);
+        setFontSize(options.ui.fontSize);
+      }
       setSavedBlob(null);
-      setStatusMessage(null);
+      if (!options?.preserveStatusMessage) {
+        setStatusMessage(null);
+      }
       resetHistory({
         annotations: options?.annotations ?? [],
         pdfTextEdits: options?.pdfTextEdits ?? [],
@@ -165,13 +224,44 @@ export function PdfEditor() {
     [resetHistory],
   );
 
+  const restoreFromDraft = useCallback(
+    async (draft: EditorDraft) => {
+      if (!draft.pdfBase64) return false;
+      const bytes = base64ToArrayBuffer(draft.pdfBase64);
+      await loadFromBytes(bytes, draft.fileName, {
+        documentId: draft.documentId,
+        annotations: draft.annotations,
+        pdfTextEdits: draft.pdfTextEdits,
+        pageDimensions: draft.pageDimensions,
+        fileHash: draft.fileHash ?? undefined,
+        documentKey: draft.documentKey,
+        ui: draft,
+        preserveStatusMessage: true,
+      });
+      return true;
+    },
+    [loadFromBytes],
+  );
+
   const loadFile = useCallback(
     async (selected: File) => {
       const bytes = await selected.arrayBuffer();
-      await loadFromBytes(bytes, selected.name, { documentId: null });
+      const hash = await hashPdfBytes(bytes);
+      const draft = findEditorDraft(userKey, documentKeyForUpload(hash));
+      await loadFromBytes(bytes, selected.name, {
+        documentId: null,
+        annotations: draft?.annotations,
+        pdfTextEdits: draft?.pdfTextEdits,
+        pageDimensions: draft?.pageDimensions,
+        fileHash: hash,
+        ui: draft ?? undefined,
+      });
+      if (draft) {
+        setStatusMessage("Restored your unsaved edits for this file.");
+      }
       router.replace("/pdfeditor");
     },
-    [loadFromBytes, router],
+    [loadFromBytes, router, userKey],
   );
 
   const loadStoredDocument = useCallback(
@@ -186,15 +276,28 @@ export function PdfEditor() {
       try {
         const stored = await fetchDocumentById(id, email);
         const bytes = base64ToArrayBuffer(stored.pdfBase64);
+        const draft = findEditorDraft(userKey, documentKeyForCloud(stored._id));
+
         await loadFromBytes(bytes, stored.name, {
           documentId: stored._id,
-          annotations: stored.annotations,
-          pdfTextEdits: stored.pdfTextEdits,
-          pageDimensions: stored.pageDimensions,
+          annotations: draft?.annotations ?? stored.annotations,
+          pdfTextEdits: draft?.pdfTextEdits ?? stored.pdfTextEdits,
+          pageDimensions:
+            draft?.pageDimensions?.length
+              ? draft.pageDimensions
+              : stored.pageDimensions,
+          documentKey: documentKeyForCloud(stored._id),
+          ui: draft ?? undefined,
+          preserveStatusMessage: Boolean(draft),
         });
+
         loadedDocumentIdRef.current = stored._id;
         router.replace(`/pdfeditor?id=${stored._id}`);
-        setStatusMessage(`Opened "${stored.name}" from MongoDB.`);
+        if (draft) {
+          setStatusMessage("Restored your unsaved edits for this document.");
+        } else {
+          setStatusMessage(`Opened "${stored.name}" from MongoDB.`);
+        }
       } catch (error) {
         setStatusMessage(
           error instanceof Error ? error.message : "Could not open saved PDF",
@@ -203,7 +306,7 @@ export function PdfEditor() {
         setIsLoadingDocument(false);
       }
     },
-    [email, emailValid, loadFromBytes, pdf, router],
+    [email, emailValid, loadFromBytes, pdf, router, userKey],
   );
 
   const handleDimensions = useCallback((pageIndex: number, dims: PageDimensions) => {
@@ -227,9 +330,33 @@ export function PdfEditor() {
     commitHistory();
   }, [selectedAnnotationId, commitHistory]);
 
-  const resetEditor = () => {
+  const resetEditor = useCallback(() => {
+    dismissEditorDraft(userKey, documentKey);
+    sessionRestoreRef.current = true;
+    loadedDocumentIdRef.current = null;
+    hasAutoScaledRef.current = false;
+    pageCanvasRefs.current = [];
+    setFile(null);
+    setPdf(null);
+    setPdfBytes(null);
+    setDocumentId(null);
+    setDocumentKey(null);
+    setFileHash(null);
+    setAnnotations([]);
+    setPdfTextEdits([]);
+    setPageDimensions([]);
+    setCurrentPage(0);
+    setTool("editPdf");
+    setSelectedAnnotationId(null);
+    setEditingTextId(null);
+    setEditingPdfTextId(null);
+    setNewTextDraft(null);
+    setSavedBlob(null);
+    setStatusMessage(null);
+    setIsLoadingDocument(false);
+    resetHistory({ annotations: [], pdfTextEdits: [] });
     router.replace("/pdfeditor");
-  };
+  }, [documentKey, resetHistory, router, userKey]);
 
   const handlePdfTextEdit = useCallback(
     (edit: PdfTextEdit) => {
@@ -363,13 +490,19 @@ export function PdfEditor() {
           pageDimensions: payload.pageDimensions,
         });
         setDocumentId(stored._id);
+        setDocumentKey(documentKeyForCloud(stored._id));
         router.replace(`/pdfeditor?id=${stored._id}`);
         setStatusMessage("Document saved.");
       }
 
+      clearDraft();
+      if (documentKey) {
+        clearEditorDraft(resolveUserStorageKey(saveEmail), documentKey);
+      }
+      setSaveDialogOpen(false);
+
       const bytes = await exportLocally();
       setSavedBlob(bytes);
-      setSaveDialogOpen(false);
     } catch (error) {
       const message =
         error instanceof Error && error.message.includes("MONGODB_URI")
@@ -397,6 +530,7 @@ export function PdfEditor() {
       const bytes = await exportLocally();
       const baseName = file.name.replace(/\.pdf$/i, "") || "document";
       downloadPdf(bytes, `${baseName}-edited.pdf`);
+      clearDraft();
       setStatusMessage("Download started.");
       setFeedbackDialogOpen(false);
     } catch (error) {
@@ -539,6 +673,30 @@ export function PdfEditor() {
     if (!urlDocumentId || !emailReady || !emailValid) return;
     void loadStoredDocument(urlDocumentId);
   }, [urlDocumentId, emailReady, emailValid, loadStoredDocument]);
+
+  useEffect(() => {
+    if (!emailReady || sessionRestoreRef.current || pdf) return;
+    if (urlDocumentId) {
+      sessionRestoreRef.current = true;
+      return;
+    }
+
+    sessionRestoreRef.current = true;
+    const draft = readActiveEditorDraft(userKey);
+    if (!draft) return;
+
+    if (draft.documentId) {
+      router.replace(`/pdfeditor?id=${draft.documentId}`);
+      return;
+    }
+
+    void (async () => {
+      const restored = await restoreFromDraft(draft);
+      if (restored) {
+        setStatusMessage("Restored your unsaved edits for this document.");
+      }
+    })();
+  }, [emailReady, pdf, restoreFromDraft, router, urlDocumentId, userKey]);
 
   if (!file || !pdf) {
     if (isLoadingDocument) {

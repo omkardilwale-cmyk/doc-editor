@@ -31,6 +31,35 @@ interface PdfNativeTextInputProps {
 
 const TOOLBAR_GAP = 6;
 
+function readPlainText(el: HTMLElement): string {
+  return (el.innerText ?? el.textContent ?? "").replace(/\n/g, "");
+}
+
+function restoreCaret(el: HTMLElement, offset: number) {
+  const textNode = el.firstChild;
+  if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return;
+  const range = document.createRange();
+  const nextOffset = Math.min(offset, textNode.textContent?.length ?? 0);
+  range.setStart(textNode, nextOffset);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function normalizeEditorPlainText(el: HTMLDivElement): string {
+  const text = readPlainText(el);
+  if (el.textContent !== text || el.querySelector("*")) {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const offset =
+      range && el.contains(range.startContainer) ? range.startOffset : text.length;
+    el.textContent = text;
+    restoreCaret(el, offset);
+  }
+  return text;
+}
+
 export const PdfNativeTextInput = forwardRef<
   PdfNativeTextInputHandle,
   PdfNativeTextInputProps
@@ -90,7 +119,7 @@ export const PdfNativeTextInput = forwardRef<
 
   const commit = useCallback(() => {
     if (committedRef.current) return;
-    if (Date.now() - mountTimeRef.current < 80) return;
+    if (Date.now() - mountTimeRef.current < 200) return;
     committedRef.current = true;
     onCommit(draft);
   }, [draft, onCommit]);
@@ -114,7 +143,7 @@ export const PdfNativeTextInput = forwardRef<
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
-    if (el.textContent !== draft.text) {
+    if (readPlainText(el) !== draft.text) {
       el.textContent = draft.text;
     }
     const timer = window.setTimeout(() => {
@@ -129,8 +158,29 @@ export const PdfNativeTextInput = forwardRef<
   }, []);
 
   useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.style.fontFamily = htmlFont.fontFamily;
+    el.style.fontWeight = String(htmlFont.fontWeight);
+    el.style.fontStyle = htmlFont.fontStyle;
+    el.style.color = draft.color;
+    el.style.caretColor = draft.color;
+    el.style.fontSize = `${matrixFontSize}px`;
+    el.style.lineHeight = `${matrixFontSize}px`;
+    el.style.webkitTextStroke = draft.fontBold ? "0.06px currentColor" : "";
+  }, [
+    draft.color,
+    draft.fontBold,
+    htmlFont.fontFamily,
+    htmlFont.fontStyle,
+    htmlFont.fontWeight,
+    matrixFontSize,
+  ]);
+
+  useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (committedRef.current) return;
+      if (Date.now() - mountTimeRef.current < 200) return;
       const root = containerRef.current;
       if (!root || root.contains(event.target as Node)) return;
       commit();
@@ -148,6 +198,7 @@ export const PdfNativeTextInput = forwardRef<
   return (
     <div
       ref={containerRef}
+      data-pdf-text-editor
       className="absolute z-40"
       style={{ left: posX, top: posY }}
       onPointerDown={(e) => e.stopPropagation()}
@@ -171,30 +222,34 @@ export const PdfNativeTextInput = forwardRef<
         ref={editorRef}
         role="textbox"
         contentEditable
+        tabIndex={0}
         suppressContentEditableWarning
-        onInput={(e) =>
-          updateDraft({ text: e.currentTarget.textContent ?? "" })
-        }
+        onInput={(e) => {
+          const text = normalizeEditorPlainText(e.currentTarget);
+          updateDraft({ text });
+        }}
         onPaste={(e) => {
           e.preventDefault();
           const pasted = e.clipboardData.getData("text/plain");
           document.execCommand("insertText", false, pasted);
         }}
-        className="m-0 whitespace-pre border-0 bg-transparent p-0 outline-none"
+        className="m-0 whitespace-pre border-0 p-0 outline-none"
         style={{
           minWidth: layoutWidth,
           height: matrixFontSize,
           fontSize: matrixFontSize,
           lineHeight: `${matrixFontSize}px`,
           color: draft.color,
+          backgroundColor: "#ffffff",
           fontFamily: htmlFont.fontFamily,
           fontWeight: htmlFont.fontWeight,
           fontStyle: htmlFont.fontStyle,
           letterSpacing: 0,
           boxSizing: "content-box",
-          padding: 0,
+          padding: "0 1px",
           margin: 0,
           caretColor: draft.color,
+          fontSynthesis: "none",
           WebkitTextStroke: draft.fontBold ? "0.06px currentColor" : undefined,
           transform: displayScale !== 1 ? `scale(${displayScale})` : undefined,
           transformOrigin: "0% 100%",

@@ -279,6 +279,8 @@ export function PdfToolbar({
           <label className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs text-zinc-600 sm:text-sm">
             <span className="hidden sm:inline">Color</span>
             <input
+              id="pdf-toolbar-color"
+              name="pdf-toolbar-color"
               type="color"
               value={color}
               onChange={(e) => onColorChange(e.target.value)}
@@ -291,6 +293,8 @@ export function PdfToolbar({
             <label className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-600 sm:text-sm">
               <span>Size</span>
               <input
+                id="pdf-toolbar-font-size"
+                name="pdf-toolbar-font-size"
                 type="number"
                 min={8}
                 max={72}

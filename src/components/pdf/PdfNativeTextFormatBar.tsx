@@ -29,6 +29,8 @@ export function PdfNativeTextFormatBar({
     >
       <label className="flex items-center gap-1 text-[11px] text-zinc-500">
         <input
+          id="pdf-native-text-color"
+          name="pdf-native-text-color"
           type="color"
           value={color}
           onChange={(e) => onColorChange(e.target.value)}
@@ -38,6 +40,8 @@ export function PdfNativeTextFormatBar({
       </label>
       <label className="flex items-center gap-1 text-[11px] text-zinc-500">
         <input
+          id="pdf-native-text-font-size"
+          name="pdf-native-text-font-size"
           type="number"
           min={6}
           max={96}

@@ -99,13 +99,15 @@ export async function extractPageTextItems(
       fontStyleCache,
     );
     const targetWidth = (item.width ?? 0) * scale;
-    const fontBold = inferBoldFromWidth(
-      text,
-      fontSizeFromMatrix,
-      targetWidth,
-      fontStyle,
-      measureCanvasTextWidth,
-    );
+    const fontBold =
+      fontStyle.fontBold ||
+      inferBoldFromWidth(
+        text,
+        fontSizeFromMatrix,
+        targetWidth,
+        fontStyle,
+        measureCanvasTextWidth,
+      );
     const fontMetrics = {
       fontFamily: fontStyle.fontFamily,
       fontBold,

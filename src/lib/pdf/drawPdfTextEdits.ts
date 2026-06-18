@@ -6,6 +6,11 @@ import {
   editOverlayTopFromBaseline,
 } from "@/lib/pdf/pdfTextFont";
 
+const COVER_PAD_X = 3;
+const COVER_PAD_TOP = 2;
+/** Extra room below glyphs so row rules/dividers are fully masked. */
+const COVER_PAD_BOTTOM = 5;
+
 export function getPdfTextItemCoverBounds(
   item: Pick<
     PdfTextItem,
@@ -21,19 +26,83 @@ export function getPdfTextItemCoverBounds(
   const matrixFontSize = item.matrixFontSize ?? item.fontSize;
   const displayScale = item.fontSize / matrixFontSize;
   const top = Number.isFinite(item.y)
-    ? item.y - (displayScale > 1 ? matrixFontSize * (displayScale - 1) : 0)
-    : editOverlayTopFromBaseline(item.canvasBaselineY, matrixFontSize);
-  const height = Math.max(matrixFontSize * 1.05, item.fontSize) + 2;
-  const width = Math.max(item.width, item.sourceWidth, item.fontSize) + 6;
+    ? item.y -
+      (displayScale > 1 ? matrixFontSize * (displayScale - 1) : 0) -
+      COVER_PAD_TOP
+    : editOverlayTopFromBaseline(item.canvasBaselineY, matrixFontSize) -
+      COVER_PAD_TOP;
+  const height =
+    Math.max(matrixFontSize * 1.1, item.fontSize) +
+    COVER_PAD_TOP +
+    COVER_PAD_BOTTOM;
+  const width = Math.max(item.width, item.sourceWidth, item.fontSize) + COVER_PAD_X * 2;
 
   return {
-    x: item.x - 2,
+    x: item.x - COVER_PAD_X,
     top,
     width,
     height,
     baselineY: item.canvasBaselineY,
     fontSize: item.fontSize,
   };
+}
+
+const EDIT_COVER_PAD_X = 2;
+const EDIT_COVER_PAD_TOP = 1;
+const EDIT_COVER_PAD_BOTTOM = 2;
+
+/** Tight white cover for the inline editor — hides PDF glyphs without a large flash. */
+export function getPdfTextItemEditCoverBounds(
+  item: Pick<
+    PdfTextItem,
+    | "x"
+    | "y"
+    | "width"
+    | "sourceWidth"
+    | "fontSize"
+    | "matrixFontSize"
+    | "canvasBaselineY"
+  >,
+) {
+  const matrixFontSize = item.matrixFontSize ?? item.fontSize;
+  const displayScale = item.fontSize / matrixFontSize;
+  const top = Number.isFinite(item.y)
+    ? item.y -
+      (displayScale > 1 ? matrixFontSize * (displayScale - 1) : 0) -
+      EDIT_COVER_PAD_TOP
+    : editOverlayTopFromBaseline(item.canvasBaselineY, matrixFontSize) -
+      EDIT_COVER_PAD_TOP;
+  const height =
+    Math.max(matrixFontSize * 1.05, item.fontSize) +
+    EDIT_COVER_PAD_TOP +
+    EDIT_COVER_PAD_BOTTOM;
+  const width =
+    Math.max(item.width, item.sourceWidth, item.fontSize) + EDIT_COVER_PAD_X * 2;
+
+  return {
+    x: item.x - EDIT_COVER_PAD_X,
+    top,
+    width,
+    height,
+  };
+}
+
+export function paintPdfTextItemEditCoverOnContext(
+  ctx: CanvasRenderingContext2D,
+  item: Pick<
+    PdfTextItem,
+    | "x"
+    | "y"
+    | "width"
+    | "sourceWidth"
+    | "fontSize"
+    | "matrixFontSize"
+    | "canvasBaselineY"
+  >,
+) {
+  const { x, top, width, height } = getPdfTextItemEditCoverBounds(item);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(x, top, width, height);
 }
 
 /** Hide original PDF glyphs while inline editing. */
@@ -61,13 +130,24 @@ export function getEditCanvasBounds(
 ) {
   const ratio = dims.width / edit.canvasViewportWidth;
   const fontSize = edit.canvasFontSize * ratio;
-  const x = edit.canvasX * ratio;
+  const textX = edit.canvasX * ratio;
   const baselineY = edit.canvasBaselineY * ratio;
-  const topY = edit.canvasY * ratio;
-  const width = edit.canvasCoverWidth * ratio;
-  const height = Math.max(edit.canvasHeight * ratio, fontSize * 1.05);
+  const topY = edit.canvasY * ratio - COVER_PAD_TOP;
+  const width = edit.canvasCoverWidth * ratio + COVER_PAD_X * 2;
+  const height =
+    Math.max(edit.canvasHeight * ratio, fontSize * 1.1) +
+    COVER_PAD_TOP +
+    COVER_PAD_BOTTOM;
 
-  return { x, topY, baselineY, width, height, fontSize };
+  return {
+    coverX: textX - COVER_PAD_X,
+    textX,
+    topY,
+    baselineY,
+    width,
+    height,
+    fontSize,
+  };
 }
 
 /** Paint a single PDF text replacement onto any canvas context. */
@@ -78,13 +158,11 @@ export function paintPdfTextEditOnContext(
 ) {
   if (edit.newText === edit.originalText) return;
 
-  const { x, topY, baselineY, width, height, fontSize } = getEditCanvasBounds(
-    edit,
-    dims,
-  );
+  const { coverX, textX, topY, baselineY, width, height, fontSize } =
+    getEditCanvasBounds(edit, dims);
 
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(x - 1, topY - 1, width + 2, height + 2);
+  ctx.fillRect(coverX, topY, width, height);
 
   ctx.font = buildCanvasFontCss(fontSize, {
     fontFamily: edit.fontFamily ?? "sans-serif",
@@ -96,7 +174,7 @@ export function paintPdfTextEditOnContext(
   fillCanvasTextWithBoldMatch(
     ctx,
     edit.newText,
-    x,
+    textX,
     baselineY,
     edit.fontBold ?? false,
   );

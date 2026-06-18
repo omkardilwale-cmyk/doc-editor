@@ -31,9 +31,9 @@ export function parseFontTraits(fontName: string, fontFamily: string) {
       combined,
     ) &&
       !/semilight|demilight|notbold|nonbold/.test(combined)) ||
-  /(^|[^a-z])bd([^a-z]|$)/.test(combined);
+    /(^|[^a-z])bd([^a-z]|$)/.test(combined);
   const fontItalic =
-    /\bitalic\b|\boblique\b|_italic\b|-italic\b|,italic\b|-it\b|italicmt\b/.test(
+    /\bitalic\b|\boblique\b|_italic\b|-italic\b|,italic\b|-it\b|italicmt\b|obliquemt\b/.test(
       combined,
     );
   return { fontBold, fontItalic };
@@ -58,10 +58,24 @@ export function resolveDisplayFontFamily(
   if (lower.includes("courier") || lower.includes("mono")) {
     return "Courier New, Courier, monospace";
   }
-  if (lower.includes("times") || lower.includes("roman")) {
+  if (
+    lower.includes("times") ||
+    /(^|[^a-z])roman([^a-z]|$)/.test(lower) ||
+    lower.includes("minion") ||
+    lower.includes("palatino") ||
+    lower.includes("garamond")
+  ) {
     return "Times New Roman, Times, serif";
   }
-  if (lower.includes("arial") || lower.includes("helvetica")) {
+  if (
+    lower.includes("arial") ||
+    lower.includes("helvetica") ||
+    lower.includes("verdana") ||
+    lower.includes("tahoma") ||
+    lower.includes("calibri") ||
+    lower.includes("avenir") ||
+    lower.includes("futura")
+  ) {
     return "Helvetica, Arial, sans-serif";
   }
   if (generic === "serif") return "Times New Roman, Times, serif";
@@ -113,8 +127,16 @@ export async function resolvePdfFontStyleFromPage(
   const fontObj = await loadPdfFontObject(page, fontId);
   const internalFontName =
     fontObj?.name?.trim() || fontObj?.loadedName?.trim() || fontId;
+  const traitNames = [
+    fontObj?.name,
+    fontObj?.loadedName,
+    fontObj?.fallbackName,
+    fontId,
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join(" ");
   const traits = parseFontTraits(
-    internalFontName,
+    traitNames,
     styleEntry?.fontFamily ?? fontObj?.fallbackName ?? "",
   );
   const fontFamily = resolveDisplayFontFamily(
