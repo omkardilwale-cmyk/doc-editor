@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Doc Editor — PDF Editor
 
-## Getting Started
+A Next.js serverless web app for editing any PDF: upload, annotate, save changes, and download the updated file.
 
-First, run the development server:
+## Features
+
+- **Upload** — drag-and-drop or file picker for any PDF
+- **Edit** — add text, highlights, and freehand drawings on any page
+- **Save** — persists edits via a serverless API route (`/api/pdf/export`)
+- **Download** — export the annotated PDF to your device
+
+## Tools
+
+| Tool | Action |
+|------|--------|
+| Select | Double-click an annotation to delete it |
+| Text | Click to place text on the page |
+| Highlight | Drag to create a highlight box |
+| Draw | Freehand pen strokes |
+| Eraser | Click annotations to remove them |
+
+Use **Prev / Next** to switch the active page (only the highlighted page receives edits).
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy (Vercel)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+```
 
-## Learn More
+The export API runs as a serverless function on Vercel. PDF processing uses `pdf-lib` on the server; the client uses `pdfjs-dist` for rendering.
 
-To learn more about Next.js, take a look at the following resources:
+## Tech stack
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [Next.js](https://nextjs.org/) (App Router, serverless API routes)
+- [pdf.js](https://mozilla.github.io/pdf.js/) — PDF rendering
+- [pdf-lib](https://pdf-lib.js.org/) — merge annotations into the PDF
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Project structure
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/
+    api/pdf/export/route.ts   # Serverless PDF export
+    page.tsx
+  components/pdf/             # Editor UI
+  lib/pdf/                    # PDF load, render, export
+  types/annotations.ts
+```
