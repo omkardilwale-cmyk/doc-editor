@@ -1,6 +1,7 @@
 export type EditTool =
   | "select"
   | "editPdf"
+  | "inspectText"
   | "text"
   | "highlight"
   | "draw"

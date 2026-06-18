@@ -81,6 +81,8 @@ interface PdfPageCanvasProps {
   pageDimensions: PageDimensions | undefined;
   onApplyTextStyle: (style: { fontSize: number; color: string }) => void;
   onHistoryCommit: () => void;
+  inspectedPdfTextId: string | null;
+  onInspectPdfText: (item: PdfTextItem) => void;
 }
 
 export interface PdfPageCanvasHandle {
@@ -115,6 +117,8 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
     pageDimensions,
     onApplyTextStyle,
     onHistoryCommit,
+    inspectedPdfTextId,
+    onInspectPdfText,
   },
   ref,
 ) {
@@ -221,6 +225,28 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
       if (hovered) drawPdfTextHover(ctx, hovered);
     }
 
+    if (tool === "inspectText" && hoveredPdfTextId) {
+      const hovered = pdfTextItems.find((item) => item.id === hoveredPdfTextId);
+      if (hovered) drawPdfTextHover(ctx, hovered);
+    }
+
+    if (inspectedPdfTextId) {
+      const inspected = pdfTextItems.find((item) => item.id === inspectedPdfTextId);
+      if (inspected) {
+        ctx.save();
+        ctx.strokeStyle = "#d97706";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.strokeRect(
+          inspected.x - 2,
+          inspected.y - 2,
+          inspected.width + 4,
+          inspected.height + 4,
+        );
+        ctx.restore();
+      }
+    }
+
     drawAnnotationsOnCanvas(
       ctx,
       annotations,
@@ -254,6 +280,7 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
     tool,
     hoveredPdfTextId,
     editingPdfTextId,
+    inspectedPdfTextId,
     pdfTextItems,
   ]);
 
@@ -783,6 +810,13 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
       return;
     }
 
+    if (tool === "inspectText") {
+      if (editingPdfTextId) commitActivePdfTextEdit();
+      const hit = hitTestPdfTextAt(point.x, point.y);
+      if (hit) onInspectPdfText(hit);
+      return;
+    }
+
     e.currentTarget.setPointerCapture(e.pointerId);
 
     if (editingPdfTextId) {
@@ -857,7 +891,7 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
     if (!canInteract) return;
     const point = getPoint(e);
 
-    if (tool === "editPdf") {
+    if (tool === "editPdf" || tool === "inspectText") {
       const hit = hitTestPdfTextAt(point.x, point.y);
       setHoveredPdfTextId(hit?.id ?? null);
       return;
@@ -1017,6 +1051,10 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
       ? hoveredPdfTextId
         ? "text"
         : "cell"
+      : tool === "inspectText"
+        ? hoveredPdfTextId
+          ? "help"
+          : "default"
       : tool === "text"
       ? "text"
       : tool === "draw" || tool === "highlight"

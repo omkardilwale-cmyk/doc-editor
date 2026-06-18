@@ -18,6 +18,13 @@ const TOOLS: {
   icon: string;
 }[] = [
   {
+    id: "inspectText",
+    label: "Text properties",
+    shortLabel: "Props",
+    description: "Click PDF text to inspect font, size, color, and position",
+    icon: "ℹ",
+  },
+  {
     id: "editPdf",
     label: "Edit PDF text",
     shortLabel: "Edit",
@@ -151,6 +158,7 @@ interface PdfToolbarProps {
   isDownloading?: boolean;
   selectedAnnotation: Annotation | null;
   onEditSelectedText: () => void;
+  onShowAnnotationProperties: () => void;
   onDeleteSelected: () => void;
   canUndo: boolean;
   canRedo: boolean;
@@ -178,6 +186,7 @@ export function PdfToolbar({
   isDownloading = false,
   selectedAnnotation,
   onEditSelectedText,
+  onShowAnnotationProperties,
   onDeleteSelected,
   canUndo,
   canRedo,
@@ -308,13 +317,22 @@ export function PdfToolbar({
           {selectedAnnotation && tool === "select" && (
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1">
               {selectedAnnotation.type === "text" && (
-                <button
-                  type="button"
-                  onClick={onEditSelectedText}
-                  className="rounded px-2 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
-                >
-                  Edit
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={onShowAnnotationProperties}
+                    className="rounded px-2 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                  >
+                    Properties
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onEditSelectedText}
+                    className="rounded px-2 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                  >
+                    Edit
+                  </button>
+                </>
               )}
               <button
                 type="button"

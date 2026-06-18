@@ -8,6 +8,10 @@ import { EmailSaveDialog } from "./EmailSaveDialog";
 import { PdfUploader } from "./PdfUploader";
 import { PdfToolbar } from "./PdfToolbar";
 import { PdfPageCanvas, type PdfPageCanvasHandle } from "./PdfPageCanvas";
+import {
+  PdfTextPropertiesPanel,
+  type TextPropertiesSelection,
+} from "./PdfTextPropertiesPanel";
 import { loadPdfDocument } from "@/lib/pdf/pdfjs";
 import { downloadPdf } from "@/lib/pdf/exportPdf";
 import { exportPdfFromRenderedPages } from "@/lib/pdf/exportPdfCanvas";
@@ -39,7 +43,7 @@ import type {
   PageDimensions,
   TextAnnotation,
 } from "@/types/annotations";
-import type { PdfTextEdit } from "@/types/pdfText";
+import type { PdfTextEdit, PdfTextItem } from "@/types/pdfText";
 export function PdfEditor() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -68,6 +72,11 @@ export function PdfEditor() {
   );
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingPdfTextId, setEditingPdfTextId] = useState<string | null>(null);
+  const [textPropertiesSelection, setTextPropertiesSelection] =
+    useState<TextPropertiesSelection | null>(null);
+  const [inspectedPdfTextId, setInspectedPdfTextId] = useState<string | null>(
+    null,
+  );
   const [newTextDraft, setNewTextDraft] = useState<TextAnnotation | null>(null);
   const [pdfTextEdits, setPdfTextEdits] = useState<PdfTextEdit[]>([]);
   const [documentId, setDocumentId] = useState<string | null>(urlDocumentId);
@@ -350,6 +359,8 @@ export function PdfEditor() {
     setSelectedAnnotationId(null);
     setEditingTextId(null);
     setEditingPdfTextId(null);
+    setTextPropertiesSelection(null);
+    setInspectedPdfTextId(null);
     setNewTextDraft(null);
     setSavedBlob(null);
     setStatusMessage(null);
@@ -428,6 +439,36 @@ export function PdfEditor() {
     if (!selectedAnnotation || selectedAnnotation.type !== "text") return;
     setEditingTextId(selectedAnnotation.id);
   };
+
+  const handleInspectPdfText = useCallback((item: PdfTextItem) => {
+    setTextPropertiesSelection({ kind: "pdf", item });
+    setInspectedPdfTextId(item.id);
+    setCurrentPage(item.pageIndex);
+  }, []);
+
+  const handleShowAnnotationProperties = useCallback(() => {
+    if (!selectedAnnotation || selectedAnnotation.type !== "text") return;
+    setTextPropertiesSelection({
+      kind: "annotation",
+      annotation: selectedAnnotation,
+    });
+    setInspectedPdfTextId(null);
+  }, [selectedAnnotation]);
+
+  const handleCloseTextProperties = useCallback(() => {
+    setTextPropertiesSelection(null);
+    setInspectedPdfTextId(null);
+  }, []);
+
+  const handleToolChange = useCallback((nextTool: EditTool) => {
+    setTool(nextTool);
+    if (nextTool !== "inspectText") {
+      setTextPropertiesSelection((prev) =>
+        prev?.kind === "pdf" ? null : prev,
+      );
+      setInspectedPdfTextId(null);
+    }
+  }, []);
 
   const handleApplyTextStyle = useCallback(
     (style: { fontSize: number; color: string }) => {
@@ -742,7 +783,7 @@ export function PdfEditor() {
 
       <PdfToolbar
         tool={tool}
-        onToolChange={setTool}
+        onToolChange={handleToolChange}
         color={color}
         onColorChange={handleColorChange}
         fontSize={fontSize}
@@ -760,12 +801,20 @@ export function PdfEditor() {
         isDownloading={isDownloading}
         selectedAnnotation={selectedAnnotation ?? null}
         onEditSelectedText={handleEditSelectedText}
+        onShowAnnotationProperties={handleShowAnnotationProperties}
         onDeleteSelected={deleteSelectedAnnotation}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={handleUndo}
         onRedo={handleRedo}
       />
+
+      {textPropertiesSelection && (
+        <PdfTextPropertiesPanel
+          selection={textPropertiesSelection}
+          onClose={handleCloseTextProperties}
+        />
+      )}
 
       {statusMessage && (
         <div className="bg-emerald-600 px-4 py-2 text-center text-sm text-white">
@@ -806,6 +855,8 @@ export function PdfEditor() {
               pageDimensions={pageDimensions[i]}
               onApplyTextStyle={handleApplyTextStyle}
               onHistoryCommit={commitHistory}
+              inspectedPdfTextId={inspectedPdfTextId}
+              onInspectPdfText={handleInspectPdfText}
             />
             </div>
           ))}
