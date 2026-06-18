@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { measureCanvasTextWidth } from "@/lib/pdf/extractPdfText";
+import { getPdfTextItemCoverBounds } from "@/lib/pdf/drawPdfTextEdits";
+import { inputTopFromBaseline, resolveHtmlFontStyle } from "@/lib/pdf/pdfTextFont";
 import type { PdfTextItem } from "@/types/pdfText";
 
 interface PdfNativeTextInputProps {
@@ -9,6 +11,7 @@ interface PdfNativeTextInputProps {
   text: string;
   onCommit: (text: string) => void;
   onCancel: () => void;
+  onCoverWidthChange?: (width: number) => void;
 }
 
 export function PdfNativeTextInput({
@@ -16,9 +19,11 @@ export function PdfNativeTextInput({
   text,
   onCommit,
   onCancel,
+  onCoverWidthChange,
 }: PdfNativeTextInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(false);
+  const focusedRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
   const [value, setValue] = useState(text);
 
@@ -27,24 +32,42 @@ export function PdfNativeTextInput({
     fontBold: item.fontBold,
     fontItalic: item.fontItalic,
   };
-  const textWidth = measureCanvasTextWidth(value || " ", item.fontSize, fontMetrics);
-  const inputWidth = Math.max(textWidth + 6, item.width, item.fontSize);
-  const lineHeight = item.fontSize * (item.ascent - item.descent);
+  const fontSize =
+    Number.isFinite(item.fontSize) && item.fontSize > 0 ? item.fontSize : 12;
+  const baselineY = Number.isFinite(item.canvasBaselineY)
+    ? item.canvasBaselineY
+    : item.y + fontSize;
+  const posX = Number.isFinite(item.x) ? item.x : 0;
+  const posY = inputTopFromBaseline(baselineY, fontSize);
+  const cover = getPdfTextItemCoverBounds(item);
+  const textWidth = measureCanvasTextWidth(value || " ", fontSize, fontMetrics);
+  const inputWidth = Math.max(textWidth + 4, item.width, fontSize);
   const textColor = item.color ?? "#111827";
+  const htmlFont = resolveHtmlFontStyle(fontMetrics);
+
+  useEffect(() => {
+    onCoverWidthChange?.(inputWidth);
+  }, [inputWidth, onCoverWidthChange]);
+
+  useEffect(() => {
+    setValue(text);
+  }, [text]);
 
   useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
     const timer = window.setTimeout(() => {
-      input.focus();
+      input.focus({ preventScroll: true });
       input.select();
+      focusedRef.current = true;
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
   const commit = () => {
     if (committedRef.current) return;
-    if (Date.now() - mountTimeRef.current < 150) return;
+    if (!focusedRef.current) return;
+    if (Date.now() - mountTimeRef.current < 200) return;
     committedRef.current = true;
     onCommit(value);
   };
@@ -56,42 +79,54 @@ export function PdfNativeTextInput({
   };
 
   return (
-    <input
-      ref={inputRef}
-      type="text"
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      className="absolute z-30 m-0 rounded-sm bg-transparent p-0 caret-current outline outline-1 outline-indigo-400/70 focus:outline-2 focus:outline-indigo-500"
+    <div
+      className="absolute z-40 bg-white shadow-[0_0_0_2px_rgb(99_102_241)]"
       style={{
-        left: item.x,
-        top: item.y,
-        width: inputWidth,
-        height: item.height,
-        fontSize: item.fontSize,
-        lineHeight: `${lineHeight}px`,
-        color: textColor,
-        fontFamily: item.fontFamily,
-        fontWeight: item.fontBold ? "bold" : "normal",
-        fontStyle: item.fontItalic ? "italic" : "normal",
-        boxSizing: "content-box",
-        padding: 0,
-        margin: 0,
-        border: "none",
-        background: "transparent",
+        left: cover.x,
+        top: cover.top,
+        width: Math.max(cover.width, inputWidth + (posX - cover.x) + 4),
+        height: cover.height,
       }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      onBlur={() => commit()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          cancel();
-        }
-      }}
-    />
+    >
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="absolute m-0 border-0 bg-transparent p-0"
+        style={{
+          left: posX - cover.x,
+          top: posY - cover.top,
+          width: inputWidth,
+          height: fontSize,
+          fontSize,
+          lineHeight: `${fontSize}px`,
+          color: textColor,
+          fontFamily: htmlFont.fontFamily,
+          fontWeight: htmlFont.fontWeight,
+          fontStyle: htmlFont.fontStyle,
+          letterSpacing: 0,
+          boxSizing: "border-box",
+          padding: 0,
+          margin: 0,
+        }}
+        onMouseDown={(e) => e.preventDefault()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onBlur={() => commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+      />
+    </div>
   );
 }

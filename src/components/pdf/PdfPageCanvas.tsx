@@ -16,6 +16,7 @@ import { drawAnnotationsOnCanvas, hitTestAnnotation } from "@/lib/pdf/drawAnnota
 import {
   drawPdfTextHover,
   paintPdfTextEditsOnCanvas,
+  paintPdfTextItemCoverOnContext,
 } from "@/lib/pdf/drawPdfTextEdits";
 import {
   extractPageTextItems,
@@ -123,6 +124,8 @@ export function PdfPageCanvas({
   const [isVisible, setIsVisible] = useState(false);
   const [pdfTextItems, setPdfTextItems] = useState<PdfTextItem[]>([]);
   const textColorByIdRef = useRef<Map<string, string>>(new Map());
+  const [activePdfTextEditItem, setActivePdfTextEditItem] =
+    useState<PdfTextItem | null>(null);
   const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
 
   const pageAnnotations = annotations.filter((a) => a.pageIndex === pageIndex);
@@ -141,9 +144,10 @@ export function PdfPageCanvas({
   }, [editingTextId, newTextDraft, annotations, pageIndex]);
 
   const editingPdfItem = useMemo(() => {
+    if (activePdfTextEditItem) return activePdfTextEditItem;
     if (!editingPdfTextId) return null;
     return pdfTextItems.find((item) => item.id === editingPdfTextId) ?? null;
-  }, [editingPdfTextId, pdfTextItems]);
+  }, [activePdfTextEditItem, editingPdfTextId, pdfTextItems]);
 
   const editingPdfDisplayText = useMemo(() => {
     if (!editingPdfItem) return "";
@@ -270,6 +274,22 @@ export function PdfPageCanvas({
     onNewTextDraftChange(null);
   };
 
+  const paintEditingPdfTextCover = useCallback(
+    (widthOverride?: number) => {
+      const canvas = pdfCanvasRef.current;
+      const item = activePdfTextEditItem;
+      if (!canvas || !item) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const coverItem =
+        widthOverride !== undefined
+          ? { ...item, width: Math.max(item.width, widthOverride) }
+          : item;
+      paintPdfTextItemCoverOnContext(ctx, coverItem);
+    },
+    [activePdfTextEditItem],
+  );
+
   const refreshPdfPageWithEdits = useCallback(
     async (edits: PdfTextEdit[]) => {
       const canvas = pdfCanvasRef.current;
@@ -289,23 +309,49 @@ export function PdfPageCanvas({
           overlay.width = dims.width;
           overlay.height = dims.height;
         }
-        paintPdfTextEditsOnCanvas(canvas, edits, pageIndex, dims);
+        const ctx = canvas.getContext("2d");
+        paintPdfTextEditsOnCanvas(
+          canvas,
+          edits,
+          pageIndex,
+          dims,
+          activePdfTextEditItem?.pageIndex === pageIndex
+            ? activePdfTextEditItem.id
+            : null,
+        );
+        if (ctx && activePdfTextEditItem?.pageIndex === pageIndex) {
+          paintPdfTextItemCoverOnContext(ctx, activePdfTextEditItem);
+        }
         redrawOverlay();
       } catch (error) {
         if (!isRenderCancelled(error)) throw error;
       }
     },
-    [pdf, pageIndex, scale, onDimensions, redrawOverlay],
+    [pdf, pageIndex, scale, onDimensions, redrawOverlay, activePdfTextEditItem],
   );
 
   const startPdfTextEdit = (item: PdfTextItem) => {
     const existingEdit = pdfTextEdits.find((e) => e.itemId === item.id);
     const style = editStyleFromItem(item, existingEdit);
 
-    textColorByIdRef.current.set(item.id, style.color!);
+    const canvas = pdfCanvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    const sampledColor =
+      ctx && typeof ImageData !== "undefined"
+        ? sampleTextColorFromCanvas(ctx, item)
+        : style.color;
+    const resolvedColor = sampledColor || style.color || "#111827";
+
+    const enriched = { ...item, ...style, color: resolvedColor };
+
+    textColorByIdRef.current.set(item.id, resolvedColor);
+    setActivePdfTextEditItem(enriched);
+    if (ctx) {
+      paintPdfTextItemCoverOnContext(ctx, enriched);
+    }
     setPdfTextItems((prev) =>
       prev.map((entry) =>
-        entry.id === item.id ? { ...entry, ...style } : entry,
+        entry.id === item.id ? enriched : entry,
       ),
     );
 
@@ -317,13 +363,16 @@ export function PdfPageCanvas({
 
   const commitPdfTextEdit = (text: string) => {
     if (!editingPdfItem) {
+      setActivePdfTextEditItem(null);
       onEditingPdfTextIdChange(null);
       return;
     }
 
     const trimmed = text.trim();
     if (!trimmed) {
+      setActivePdfTextEditItem(null);
       onEditingPdfTextIdChange(null);
+      void refreshPdfPageWithEdits(pdfTextEdits);
       return;
     }
 
@@ -398,13 +447,21 @@ export function PdfPageCanvas({
 
     void refreshPdfPageWithEdits(nextEdits);
 
+    setActivePdfTextEditItem(null);
     onEditingPdfTextIdChange(null);
     requestAnimationFrame(() => redrawOverlay());
   };
 
   const cancelPdfTextEdit = () => {
+    setActivePdfTextEditItem(null);
     onEditingPdfTextIdChange(null);
+    void refreshPdfPageWithEdits(pdfTextEdits);
   };
+
+  useEffect(() => {
+    if (!editingPdfItem) return;
+    paintEditingPdfTextCover();
+  }, [editingPdfItem, paintEditingPdfTextCover]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -461,6 +518,10 @@ export function PdfPageCanvas({
                   textColorByIdRef.current.set(item.id, edit.color);
                   return { ...item, color: edit.color };
                 }
+                if (item.color) {
+                  textColorByIdRef.current.set(item.id, item.color);
+                  return item;
+                }
                 if (cached) return { ...item, color: cached };
                 const sampled = sampleTextColorFromCanvas(ctx, item);
                 textColorByIdRef.current.set(item.id, sampled);
@@ -489,7 +550,18 @@ export function PdfPageCanvas({
         });
         setPdfTextItems(mergedItems);
 
-        paintPdfTextEditsOnCanvas(canvas, pdfTextEdits, pageIndex, dims);
+        paintPdfTextEditsOnCanvas(
+          canvas,
+          pdfTextEdits,
+          pageIndex,
+          dims,
+          activePdfTextEditItem?.pageIndex === pageIndex
+            ? activePdfTextEditItem.id
+            : null,
+        );
+        if (ctx && activePdfTextEditItem?.pageIndex === pageIndex) {
+          paintPdfTextItemCoverOnContext(ctx, activePdfTextEditItem);
+        }
         redrawOverlay();
       } catch (error) {
         if (isRenderCancelled(error)) return;
@@ -504,7 +576,7 @@ export function PdfPageCanvas({
       void cancelRenderTask(activeTaskRef.current);
       activeTaskRef.current = null;
     };
-  }, [shouldRenderPdf, pdf, pageIndex, scale, onDimensions, pdfTextEdits]);
+  }, [shouldRenderPdf, pdf, pageIndex, scale, onDimensions, pdfTextEdits, activePdfTextEditItem]);
 
   useEffect(() => {
     redrawOverlay();
@@ -565,6 +637,7 @@ export function PdfPageCanvas({
     }
 
     if (tool === "editPdf") {
+      e.currentTarget.setPointerCapture(e.pointerId);
       const hit = hitTestPdfTextItem(pdfTextItems, point.x, point.y);
       pdfTextClickPendingRef.current = hit;
       return;
@@ -692,9 +765,14 @@ export function PdfPageCanvas({
     }
   };
 
-  const handlePointerUp = () => {
-    if (tool === "editPdf" && pdfTextClickPendingRef.current) {
-      startPdfTextEdit(pdfTextClickPendingRef.current);
+  const handlePointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    if (tool === "editPdf") {
+      if (e?.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      if (pdfTextClickPendingRef.current) {
+        startPdfTextEdit(pdfTextClickPendingRef.current);
+      }
       pdfTextClickPendingRef.current = null;
       return;
     }
@@ -739,10 +817,12 @@ export function PdfPageCanvas({
     currentDrawId.current = null;
   };
 
-  const handlePointerLeave = () => {
+  const handlePointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
     setHoveredPdfTextId(null);
-    pdfTextClickPendingRef.current = null;
-    handlePointerUp();
+    if (tool !== "editPdf" || !e.currentTarget.hasPointerCapture(e.pointerId)) {
+      pdfTextClickPendingRef.current = null;
+    }
+    handlePointerUp(e);
   };
 
   const pointerHandlers = canInteract
@@ -797,6 +877,7 @@ export function PdfPageCanvas({
             text={editingPdfDisplayText}
             onCommit={commitPdfTextEdit}
             onCancel={cancelPdfTextEdit}
+            onCoverWidthChange={paintEditingPdfTextCover}
           />
         )}
         {editingAnnotation && !editingPdfTextId && (

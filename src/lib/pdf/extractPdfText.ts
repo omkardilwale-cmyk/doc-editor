@@ -2,11 +2,12 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { PdfTextItem } from "@/types/pdfText";
 import {
   buildCanvasFontCss,
-  resolvePdfFontStyle,
-  textBoxMetrics,
-  topFromBaseline,
+  inferBoldFromWidth,
+  inputTopFromBaseline,
+  resolvePdfFontStyleFromPage,
   type PdfFontStyle,
 } from "@/lib/pdf/pdfTextFont";
+import { extractTextFillColors } from "@/lib/pdf/extractPdfTextColors";
 
 export function measureCanvasTextWidth(
   text: string,
@@ -27,6 +28,37 @@ export function measureCanvasTextWidth(
   return ctx.measureText(text || " ").width;
 }
 
+/** Match browser-rendered width to the PDF glyph width at this viewport scale. */
+export function resolveCanvasFontSize(
+  text: string,
+  transformFontSize: number,
+  targetWidth: number,
+  font?: Pick<PdfFontStyle, "fontFamily" | "fontBold" | "fontItalic">,
+): number {
+  if (!Number.isFinite(transformFontSize) || transformFontSize <= 0) return 12;
+  if (!Number.isFinite(targetWidth) || targetWidth <= 0) return transformFontSize;
+
+  const measured = measureCanvasTextWidth(text, transformFontSize, font);
+  if (measured <= 0) return transformFontSize;
+
+  const ratio = targetWidth / measured;
+  if (ratio >= 0.98 && ratio <= 1.45) {
+    const scaled = transformFontSize * ratio;
+    // Width calibration can shrink bold text slightly, making it look lighter.
+    if (font?.fontBold && scaled < transformFontSize) {
+      return transformFontSize;
+    }
+    return scaled;
+  }
+  return transformFontSize;
+}
+
+function transformFontSizeFromMatrix(tx: number[]): number {
+  return (
+    Math.max(Math.hypot(tx[0], tx[1]), Math.hypot(tx[2], tx[3])) || 12
+  );
+}
+
 export async function extractPageTextItems(
   pdf: PDFDocumentProxy,
   pageIndex: number,
@@ -34,12 +66,17 @@ export async function extractPageTextItems(
 ): Promise<PdfTextItem[]> {
   const pdfjs = await import("pdfjs-dist");
   const page = await pdf.getPage(pageIndex + 1);
+  // Load embedded fonts so commonObjs exposes real names like "Helvetica-Bold".
+  await page.getOperatorList();
   const viewport = page.getViewport({ scale });
   const pdfViewport = page.getViewport({ scale: 1 });
   const textContent = await page.getTextContent();
+  const fillColors = await extractTextFillColors(page);
 
   const items: PdfTextItem[] = [];
   let index = 0;
+  let colorIndex = 0;
+  const fontStyleCache = new Map<string, PdfFontStyle>();
 
   for (const item of textContent.items) {
     if (!("str" in item)) continue;
@@ -49,27 +86,43 @@ export async function extractPageTextItems(
     const canvasTx = pdfjs.Util.transform(viewport.transform, item.transform);
     const pdfTx = pdfjs.Util.transform(pdfViewport.transform, item.transform);
 
-    const fontSize = Math.hypot(canvasTx[0], canvasTx[1]) || 12;
-    const pdfFontSize = Math.hypot(pdfTx[0], pdfTx[1]) || fontSize;
+    const fontSizeFromMatrix = transformFontSizeFromMatrix(canvasTx);
+    const pdfFontSize = transformFontSizeFromMatrix(pdfTx);
     const baselineY = canvasTx[5];
     const x = canvasTx[4];
 
-    const fontStyle = resolvePdfFontStyle(
+    const fontStyle = await resolvePdfFontStyleFromPage(
+      page,
       "fontName" in item ? String(item.fontName) : undefined,
       textContent.styles ?? {},
+      fontStyleCache,
     );
-    const { height } = textBoxMetrics(fontSize, fontStyle);
-    const y = topFromBaseline(baselineY, fontSize, fontStyle);
-    const pdfHeight = pdfFontSize * (fontStyle.ascent - fontStyle.descent);
-
+    const targetWidth = (item.width ?? 0) * scale;
+    const fontBold = inferBoldFromWidth(
+      text,
+      fontSizeFromMatrix,
+      targetWidth,
+      fontStyle,
+      measureCanvasTextWidth,
+    );
     const fontMetrics = {
       fontFamily: fontStyle.fontFamily,
-      fontBold: fontStyle.fontBold,
+      fontBold,
       fontItalic: fontStyle.fontItalic,
     };
+    const fontSize = resolveCanvasFontSize(
+      text,
+      fontSizeFromMatrix,
+      targetWidth,
+      fontMetrics,
+    );
+    const y = inputTopFromBaseline(baselineY, fontSize);
+    const height = fontSize * 1.05;
+    const pdfHeight = pdfFontSize * (fontStyle.ascent - fontStyle.descent);
+
     const pdfWidth = item.width || text.length * pdfFontSize * 0.55;
     const width = Math.max(
-      (item.width ?? 0) * scale,
+      targetWidth,
       measureCanvasTextWidth(text, fontSize, fontMetrics),
     );
 
@@ -89,10 +142,11 @@ export async function extractPageTextItems(
       height,
       fontSize,
       fontFamily: fontStyle.fontFamily,
-      fontBold: fontStyle.fontBold,
+      fontBold,
       fontItalic: fontStyle.fontItalic,
       ascent: fontStyle.ascent,
       descent: fontStyle.descent,
+      color: fillColors[colorIndex++],
       canvasBaselineY: baselineY,
       pdfX: pdfTx[4],
       pdfBaselineY: pdfTx[5],

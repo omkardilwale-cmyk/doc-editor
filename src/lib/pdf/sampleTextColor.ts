@@ -7,29 +7,58 @@ function toHex(r: number, g: number, b: number): string {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
+function aggregateForeground(samples: [number, number, number][]): string {
+  if (samples.length === 0) return DEFAULT_TEXT_COLOR;
+
+  const scored = samples.map(([r, g, b]) => ({
+    r,
+    g,
+    b,
+    score: Math.hypot(255 - r, 255 - g, 255 - b),
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored.slice(0, Math.max(1, Math.ceil(scored.length * 0.35)));
+  const r = Math.round(best.reduce((sum, c) => sum + c.r, 0) / best.length);
+  const g = Math.round(best.reduce((sum, c) => sum + c.g, 0) / best.length);
+  const b = Math.round(best.reduce((sum, c) => sum + c.b, 0) / best.length);
+
+  return toHex(r, g, b);
+}
+
 function isBackgroundPixel(r: number, g: number, b: number, a: number): boolean {
   if (a < 40) return true;
   return r > 235 && g > 235 && b > 235;
 }
 
-/** Sample glyph color from a freshly rendered PDF canvas (before overlays). */
+/** Fallback glyph color sampling from a rendered PDF canvas. */
 export function sampleTextColorFromCanvas(
   ctx: CanvasRenderingContext2D,
-  item: Pick<PdfTextItem, "x" | "y" | "width" | "height" | "fontSize">,
+  item: Pick<
+    PdfTextItem,
+    "x" | "y" | "width" | "height" | "fontSize" | "canvasBaselineY"
+  >,
 ): string {
   const canvas = ctx.canvas;
   const startX = Math.max(0, Math.floor(item.x));
   const endX = Math.min(canvas.width - 1, Math.ceil(item.x + item.width));
-  const startY = Math.max(0, Math.floor(item.y));
-  const endY = Math.min(canvas.height - 1, Math.ceil(item.y + item.height));
 
-  if (endX <= startX || endY <= startY) return DEFAULT_TEXT_COLOR;
+  const baselineY =
+    item.canvasBaselineY ?? item.y + item.height * 0.82;
+  const rowTop = Math.max(
+    0,
+    Math.floor(baselineY - item.fontSize * 0.82),
+  );
+  const rowBottom = Math.min(
+    canvas.height - 1,
+    Math.ceil(baselineY - item.fontSize * 0.12),
+  );
+
+  if (endX <= startX || rowBottom <= rowTop) return DEFAULT_TEXT_COLOR;
 
   const samples: [number, number, number][] = [];
-  const stepX = Math.max(1, Math.floor((endX - startX) / 10));
-  const stepY = Math.max(1, Math.floor((endY - startY) / 4));
+  const stepX = Math.max(1, Math.floor((endX - startX) / 16));
 
-  for (let y = startY; y <= endY; y += stepY) {
+  for (let y = rowTop; y <= rowBottom; y += 1) {
     for (let x = startX; x <= endX; x += stepX) {
       try {
         const [r, g, b, a] = ctx.getImageData(x, y, 1, 1).data;
@@ -41,13 +70,7 @@ export function sampleTextColorFromCanvas(
     }
   }
 
-  if (samples.length === 0) return DEFAULT_TEXT_COLOR;
-
-  const r = Math.round(samples.reduce((sum, c) => sum + c[0], 0) / samples.length);
-  const g = Math.round(samples.reduce((sum, c) => sum + c[1], 0) / samples.length);
-  const b = Math.round(samples.reduce((sum, c) => sum + c[2], 0) / samples.length);
-
-  return toHex(r, g, b);
+  return aggregateForeground(samples);
 }
 
 export function resolvePdfTextColor(
