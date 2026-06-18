@@ -188,7 +188,8 @@ export function resolveHtmlFontStyle(
   }
   return {
     fontFamily: boldFontFamilyStack(style.fontFamily, style.fontItalic),
-    fontWeight: 700 as const,
+    // Use the named bold face at normal weight — avoids faux-bold thinning.
+    fontWeight: 400 as const,
     fontStyle,
   };
 }
@@ -202,7 +203,7 @@ export function buildCanvasFontCss(
     return `${fontStyle} 400 ${fontSize}px ${style.fontFamily}`;
   }
   const family = boldFontFamilyStack(style.fontFamily, style.fontItalic);
-  return `${fontStyle} 700 ${fontSize}px ${family}`;
+  return `${fontStyle} 400 ${fontSize}px ${family}`;
 }
 
 /** Nudge canvas bold a hair thicker so it matches embedded PDF bold. */
@@ -215,7 +216,7 @@ export function fillCanvasTextWithBoldMatch(
 ) {
   ctx.fillText(text, x, baselineY);
   if (fontBold) {
-    ctx.fillText(text, x + 0.15, baselineY);
+    ctx.fillText(text, x + 0.22, baselineY);
   }
 }
 
@@ -247,6 +248,21 @@ export function inputTopFromBaseline(baselineY: number, fontSize: number): numbe
   return baselineY - fontSize;
 }
 
+/** Downward tweak so inline editor text lines up with PDF.js glyphs. */
+export function editTextVerticalNudge(fontSize: number): number {
+  return fontSize * 0.1;
+}
+
+export function editOverlayTopFromBaseline(
+  baselineY: number,
+  matrixFontSize: number,
+): number {
+  return (
+    inputTopFromBaseline(baselineY, matrixFontSize) +
+    editTextVerticalNudge(matrixFontSize)
+  );
+}
+
 export function inferBoldFromWidth(
   text: string,
   fontSize: number,
@@ -268,7 +284,7 @@ export function inferBoldFromWidth(
   });
   if (regularWidth <= 0) return false;
 
-  return targetWidth / regularWidth > 1.06;
+  return targetWidth / regularWidth > 1.04;
 }
 
 export type PdfLibFontKey = string;

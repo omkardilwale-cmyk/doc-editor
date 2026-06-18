@@ -4,6 +4,7 @@ import {
   buildCanvasFontCss,
   inferBoldFromWidth,
   inputTopFromBaseline,
+  editOverlayTopFromBaseline,
   resolvePdfFontStyleFromPage,
   type PdfFontStyle,
 } from "@/lib/pdf/pdfTextFont";
@@ -110,14 +111,15 @@ export async function extractPageTextItems(
       fontBold,
       fontItalic: fontStyle.fontItalic,
     };
+    const matrixFontSize = fontSizeFromMatrix;
     const fontSize = resolveCanvasFontSize(
       text,
       fontSizeFromMatrix,
       targetWidth,
       fontMetrics,
     );
-    const y = inputTopFromBaseline(baselineY, fontSize);
-    const height = fontSize * 1.05;
+    const y = editOverlayTopFromBaseline(baselineY, matrixFontSize);
+    const height = matrixFontSize * 1.05;
     const pdfHeight = pdfFontSize * (fontStyle.ascent - fontStyle.descent);
 
     const pdfWidth = item.width || text.length * pdfFontSize * 0.55;
@@ -141,6 +143,7 @@ export async function extractPageTextItems(
       width,
       height,
       fontSize,
+      matrixFontSize,
       fontFamily: fontStyle.fontFamily,
       fontBold,
       fontItalic: fontStyle.fontItalic,

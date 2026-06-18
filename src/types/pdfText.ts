@@ -12,7 +12,10 @@ export interface PdfTextItem {
   y: number;
   width: number;
   height: number;
+  /** Calibrated size for browser width matching. */
   fontSize: number;
+  /** Raw size from the PDF transform matrix (matches rendered glyphs). */
+  matrixFontSize: number;
   fontFamily: string;
   fontBold: boolean;
   fontItalic: boolean;

@@ -25,9 +25,14 @@ import {
 } from "@/lib/pdf/extractPdfText";
 import { inheritTextPlacementFromPdf } from "@/lib/pdf/textStyle";
 import { editStyleFromItem } from "@/lib/pdf/pdfTextStyle";
+import { inputTopFromBaseline } from "@/lib/pdf/pdfTextFont";
 import { sampleTextColorFromCanvas } from "@/lib/pdf/sampleTextColor";
 import { TextAnnotationOverlay } from "./TextAnnotationOverlay";
-import { PdfNativeTextInput } from "./PdfNativeTextInput";
+import {
+  PdfNativeTextInput,
+  type PdfNativeTextInputHandle,
+} from "./PdfNativeTextInput";
+import type { PdfNativeTextDraft } from "@/types/pdfNativeTextEdit";
 import type { PdfTextEdit, PdfTextItem } from "@/types/pdfText";
 import type {
   Annotation,
@@ -126,6 +131,11 @@ export function PdfPageCanvas({
   const textColorByIdRef = useRef<Map<string, string>>(new Map());
   const [activePdfTextEditItem, setActivePdfTextEditItem] =
     useState<PdfTextItem | null>(null);
+  const pdfTextEditRef = useRef<PdfNativeTextInputHandle>(null);
+  const pdfTextEditSessionRef = useRef<{
+    canvasFontSize: number;
+    pdfFontSize: number;
+  } | null>(null);
   const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
 
   const pageAnnotations = annotations.filter((a) => a.pageIndex === pageIndex);
@@ -345,6 +355,10 @@ export function PdfPageCanvas({
     const enriched = { ...item, ...style, color: resolvedColor };
 
     textColorByIdRef.current.set(item.id, resolvedColor);
+    pdfTextEditSessionRef.current = {
+      canvasFontSize: enriched.fontSize,
+      pdfFontSize: enriched.pdfFontSize,
+    };
     setActivePdfTextEditItem(enriched);
     if (ctx) {
       paintPdfTextItemCoverOnContext(ctx, enriched);
@@ -361,72 +375,131 @@ export function PdfPageCanvas({
     onEditingTextIdChange(null);
   };
 
-  const commitPdfTextEdit = (text: string) => {
+  const commitActivePdfTextEdit = useCallback(() => {
+    pdfTextEditRef.current?.commit();
+  }, []);
+
+  const handlePdfTextDraftChange = useCallback(
+    (draft: PdfNativeTextDraft) => {
+      setActivePdfTextEditItem((prev) => {
+        if (!prev) return prev;
+        const fontMetrics = {
+          fontFamily: prev.fontFamily,
+          fontBold: draft.fontBold,
+          fontItalic: draft.fontItalic,
+        };
+        const nextFontSize = draft.fontSize;
+        const fontScale = nextFontSize / prev.fontSize;
+        return {
+          ...prev,
+          text: draft.text,
+          color: draft.color,
+          fontSize: nextFontSize,
+          fontBold: draft.fontBold,
+          fontItalic: draft.fontItalic,
+          pdfFontSize: prev.pdfFontSize * fontScale,
+          width: Math.max(
+            prev.sourceWidth,
+            measureCanvasTextWidth(draft.text || " ", nextFontSize, fontMetrics),
+          ),
+        };
+      });
+      requestAnimationFrame(() => paintEditingPdfTextCover());
+    },
+    [paintEditingPdfTextCover],
+  );
+
+  const commitPdfTextEdit = (draft: PdfNativeTextDraft) => {
     if (!editingPdfItem) {
       setActivePdfTextEditItem(null);
+      pdfTextEditSessionRef.current = null;
       onEditingPdfTextIdChange(null);
       return;
     }
 
-    const trimmed = text.trim();
+    const trimmed = draft.text.trim();
     if (!trimmed) {
       setActivePdfTextEditItem(null);
+      pdfTextEditSessionRef.current = null;
       onEditingPdfTextIdChange(null);
       void refreshPdfPageWithEdits(pdfTextEdits);
       return;
     }
 
     const existingEdit = pdfTextEdits.find((e) => e.itemId === editingPdfItem.id);
-    const style = editStyleFromItem(editingPdfItem, existingEdit);
+    const originalStyle = editStyleFromItem(
+      { ...editingPdfItem, text: editingPdfItem.sourceText },
+      undefined,
+    );
     const fontMetrics = {
-      fontFamily: style.fontFamily!,
-      fontBold: style.fontBold!,
-      fontItalic: style.fontItalic!,
+      fontFamily: editingPdfItem.fontFamily,
+      fontBold: draft.fontBold,
+      fontItalic: draft.fontItalic,
     };
+    const session = pdfTextEditSessionRef.current;
+    const baseCanvasFontSize =
+      session?.canvasFontSize ?? editingPdfItem.fontSize;
+    const basePdfFontSize = session?.pdfFontSize ?? editingPdfItem.pdfFontSize;
+    const fontScale = draft.fontSize / baseCanvasFontSize;
     const coverWidth = Math.max(
       editingPdfItem.sourceWidth,
-      measureCanvasTextWidth(trimmed, editingPdfItem.fontSize, fontMetrics),
+      measureCanvasTextWidth(trimmed, draft.fontSize, fontMetrics),
       existingEdit?.canvasCoverWidth ?? 0,
     );
     const pdfCoverWidth = Math.max(
       editingPdfItem.pdfWidth,
-      measureCanvasTextWidth(trimmed, editingPdfItem.pdfFontSize, fontMetrics),
+      measureCanvasTextWidth(
+        trimmed,
+        basePdfFontSize * fontScale,
+        fontMetrics,
+      ),
       existingEdit?.pdfCoverWidth ?? editingPdfItem.pdfWidth,
     );
+
+    const isUnchanged =
+      trimmed === editingPdfItem.sourceText &&
+      draft.color === (originalStyle.color ?? "#111827") &&
+      Math.round(draft.fontSize) === Math.round(baseCanvasFontSize) &&
+      draft.fontBold === originalStyle.fontBold &&
+      draft.fontItalic === originalStyle.fontItalic;
 
     const edit: PdfTextEdit = {
       itemId: editingPdfItem.id,
       pageIndex,
       originalText: editingPdfItem.sourceText,
       newText: trimmed,
-      ...style,
+      color: draft.color,
+      fontFamily: editingPdfItem.fontFamily,
+      fontBold: draft.fontBold,
+      fontItalic: draft.fontItalic,
+      ascent: editingPdfItem.ascent,
+      descent: editingPdfItem.descent,
       pdfX: editingPdfItem.pdfX,
       pdfBaselineY: editingPdfItem.pdfBaselineY,
-      pdfFontSize: editingPdfItem.pdfFontSize,
+      pdfFontSize: basePdfFontSize * fontScale,
       pdfWidth: editingPdfItem.pdfWidth,
       pdfHeight: editingPdfItem.pdfHeight,
       canvasX: editingPdfItem.x,
       canvasY: editingPdfItem.y,
       canvasWidth: editingPdfItem.sourceWidth,
-      canvasHeight: editingPdfItem.height,
-      canvasFontSize: editingPdfItem.fontSize,
+      canvasHeight: draft.fontSize * 1.05,
+      canvasFontSize: draft.fontSize,
       canvasBaselineY: editingPdfItem.canvasBaselineY,
       canvasViewportWidth: pageDimensions?.width ?? editingPdfItem.width,
       canvasCoverWidth: coverWidth,
       pdfCoverWidth,
     };
 
-    const nextEdits =
-      edit.newText === edit.originalText
-        ? pdfTextEdits.filter((e) => e.itemId !== edit.itemId)
-        : [...pdfTextEdits.filter((e) => e.itemId !== edit.itemId), edit];
+    const nextEdits = isUnchanged
+      ? pdfTextEdits.filter((e) => e.itemId !== edit.itemId)
+      : [...pdfTextEdits.filter((e) => e.itemId !== edit.itemId), edit];
 
     onPdfTextEdit(edit);
 
     setPdfTextItems((prev) =>
       prev.map((item) => {
         if (item.id !== edit.itemId) return item;
-        if (trimmed === item.sourceText) {
+        if (isUnchanged) {
           return {
             ...item,
             text: item.sourceText,
@@ -436,10 +509,16 @@ export function PdfPageCanvas({
         return {
           ...item,
           text: trimmed,
-          ...style,
+          color: draft.color,
+          fontBold: draft.fontBold,
+          fontItalic: draft.fontItalic,
+          fontSize: draft.fontSize,
+          pdfFontSize: edit.pdfFontSize,
+          height: (editingPdfItem.matrixFontSize ?? draft.fontSize) * 1.05,
+          y: editingPdfItem.y,
           width: Math.max(
             item.sourceWidth,
-            measureCanvasTextWidth(trimmed, item.fontSize, fontMetrics),
+            measureCanvasTextWidth(trimmed, draft.fontSize, fontMetrics),
           ),
         };
       }),
@@ -448,12 +527,14 @@ export function PdfPageCanvas({
     void refreshPdfPageWithEdits(nextEdits);
 
     setActivePdfTextEditItem(null);
+    pdfTextEditSessionRef.current = null;
     onEditingPdfTextIdChange(null);
     requestAnimationFrame(() => redrawOverlay());
   };
 
   const cancelPdfTextEdit = () => {
     setActivePdfTextEditItem(null);
+    pdfTextEditSessionRef.current = null;
     onEditingPdfTextIdChange(null);
     void refreshPdfPageWithEdits(pdfTextEdits);
   };
@@ -621,6 +702,9 @@ export function PdfPageCanvas({
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!canInteract) return;
+    if (editingPdfTextId) {
+      commitActivePdfTextEdit();
+    }
     onActivatePage();
     e.currentTarget.setPointerCapture(e.pointerId);
     const point = getPoint(e);
@@ -872,12 +956,14 @@ export function PdfPageCanvas({
         />
         {editingPdfItem && (
           <PdfNativeTextInput
+            ref={pdfTextEditRef}
             key={editingPdfItem.id}
             item={editingPdfItem}
             text={editingPdfDisplayText}
             onCommit={commitPdfTextEdit}
             onCancel={cancelPdfTextEdit}
             onCoverWidthChange={paintEditingPdfTextCover}
+            onDraftChange={handlePdfTextDraftChange}
           />
         )}
         {editingAnnotation && !editingPdfTextId && (

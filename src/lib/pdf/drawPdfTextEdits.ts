@@ -3,27 +3,36 @@ import type { PageDimensions } from "@/types/annotations";
 import {
   buildCanvasFontCss,
   fillCanvasTextWithBoldMatch,
-  inputTopFromBaseline,
+  editOverlayTopFromBaseline,
 } from "@/lib/pdf/pdfTextFont";
 
 export function getPdfTextItemCoverBounds(
   item: Pick<
     PdfTextItem,
-    "x" | "width" | "sourceWidth" | "fontSize" | "canvasBaselineY"
+    | "x"
+    | "y"
+    | "width"
+    | "sourceWidth"
+    | "fontSize"
+    | "matrixFontSize"
+    | "canvasBaselineY"
   >,
 ) {
-  const fontSize = item.fontSize;
-  const top = inputTopFromBaseline(item.canvasBaselineY, fontSize) - 2;
-  const height = fontSize + 4;
-  const width = Math.max(item.width, item.sourceWidth, fontSize) + 12;
+  const matrixFontSize = item.matrixFontSize ?? item.fontSize;
+  const displayScale = item.fontSize / matrixFontSize;
+  const top = Number.isFinite(item.y)
+    ? item.y - (displayScale > 1 ? matrixFontSize * (displayScale - 1) : 0)
+    : editOverlayTopFromBaseline(item.canvasBaselineY, matrixFontSize);
+  const height = Math.max(matrixFontSize * 1.05, item.fontSize) + 2;
+  const width = Math.max(item.width, item.sourceWidth, item.fontSize) + 6;
 
   return {
-    x: item.x - 4,
+    x: item.x - 2,
     top,
     width,
     height,
     baselineY: item.canvasBaselineY,
-    fontSize,
+    fontSize: item.fontSize,
   };
 }
 
@@ -32,7 +41,13 @@ export function paintPdfTextItemCoverOnContext(
   ctx: CanvasRenderingContext2D,
   item: Pick<
     PdfTextItem,
-    "x" | "width" | "sourceWidth" | "fontSize" | "canvasBaselineY"
+    | "x"
+    | "y"
+    | "width"
+    | "sourceWidth"
+    | "fontSize"
+    | "matrixFontSize"
+    | "canvasBaselineY"
   >,
 ) {
   const { x, top, width, height } = getPdfTextItemCoverBounds(item);
@@ -48,7 +63,7 @@ export function getEditCanvasBounds(
   const fontSize = edit.canvasFontSize * ratio;
   const x = edit.canvasX * ratio;
   const baselineY = edit.canvasBaselineY * ratio;
-  const topY = inputTopFromBaseline(baselineY, fontSize);
+  const topY = edit.canvasY * ratio;
   const width = edit.canvasCoverWidth * ratio;
   const height = Math.max(edit.canvasHeight * ratio, fontSize * 1.05);
 
