@@ -959,19 +959,19 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
   return (
     <div
       ref={containerRef}
-      className={`relative mb-8 shadow-lg ${isActive ? "ring-2 ring-indigo-400" : ""}`}
+      className={`relative mb-6 max-w-[calc(100vw-1rem)] shadow-lg sm:mb-8 ${isActive ? "ring-2 ring-indigo-400" : ""}`}
       style={{ width: "fit-content", minHeight: shouldRenderPdf ? undefined : 320 }}
     >
       {!shouldRenderPdf && (
-        <div className="flex h-80 w-[595px] max-w-full items-center justify-center rounded bg-white text-sm text-zinc-400">
+        <div className="flex h-64 w-full min-w-[280px] max-w-full items-center justify-center rounded bg-white text-sm text-zinc-400 sm:h-80 sm:w-[595px]">
           Page {pageIndex + 1} — scroll to load
         </div>
       )}
       <div className={shouldRenderPdf ? "relative" : "hidden"}>
-        <canvas ref={pdfCanvasRef} className="block bg-white" />
+        <canvas ref={pdfCanvasRef} className="block max-w-full bg-white" />
         <canvas
           ref={overlayRef}
-          className="absolute left-0 top-0 touch-none"
+          className="absolute left-0 top-0 max-w-full touch-none"
           style={{ cursor }}
           {...pointerHandlers}
         />
@@ -1012,11 +1012,11 @@ export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>
             onPositionCommit={onHistoryCommit}
           />
         )}
-        <div className="pointer-events-none absolute -left-10 top-0 flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-xs font-medium text-white">
+        <div className="pointer-events-none absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-zinc-800 text-xs font-medium text-white">
           {pageIndex + 1}
         </div>
         {pageAnnotations.length > 0 && (
-          <p className="pointer-events-none absolute -right-2 -top-6 text-xs text-zinc-400">
+          <p className="pointer-events-none absolute right-2 top-2 text-xs text-zinc-400 sm:-right-2 sm:-top-6">
             {pageAnnotations.length} edit{pageAnnotations.length === 1 ? "" : "s"}
           </p>
         )}

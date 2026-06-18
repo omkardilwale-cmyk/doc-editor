@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { DownloadFeedbackDialog } from "./DownloadFeedbackDialog";
 import { EmailSaveDialog } from "./EmailSaveDialog";
 import { PdfUploader } from "./PdfUploader";
 import { PdfToolbar } from "./PdfToolbar";
@@ -17,6 +18,7 @@ import {
   fetchDocumentById,
   updateStoredDocument,
 } from "@/lib/api/documents";
+import { submitDownloadFeedback } from "@/lib/api/feedback";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
 import { useUserEmail } from "@/hooks/useUserEmail";
 import type {
@@ -26,13 +28,10 @@ import type {
   TextAnnotation,
 } from "@/types/annotations";
 import type { PdfTextEdit } from "@/types/pdfText";
-
-interface PdfEditorProps {
-  initialDocumentId?: string;
-}
-
-export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
+export function PdfEditor() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlDocumentId = searchParams.get("id");
   const { email, setEmail, ready: emailReady, isValid: emailValid } = useUserEmail();
   const [file, setFile] = useState<File | null>(null);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
@@ -46,6 +45,8 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
   const [scale, setScale] = useState(1.25);
   const [isSaving, setIsSaving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+  const [savingFeedback, setSavingFeedback] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saveDialogError, setSaveDialogError] = useState<string | null>(null);
   const [savedBlob, setSavedBlob] = useState<Uint8Array | null>(null);
@@ -57,17 +58,16 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
   const [editingPdfTextId, setEditingPdfTextId] = useState<string | null>(null);
   const [newTextDraft, setNewTextDraft] = useState<TextAnnotation | null>(null);
   const [pdfTextEdits, setPdfTextEdits] = useState<PdfTextEdit[]>([]);
-  const [documentId, setDocumentId] = useState<string | null>(
-    initialDocumentId ?? null,
-  );
+  const [documentId, setDocumentId] = useState<string | null>(urlDocumentId);
   const [isLoadingDocument, setIsLoadingDocument] = useState(
-    Boolean(initialDocumentId),
+    () => Boolean(urlDocumentId),
   );
 
   const annotationsRef = useRef(annotations);
   const pdfTextEditsRef = useRef(pdfTextEdits);
   const pageCanvasRefs = useRef<(PdfPageCanvasHandle | null)[]>([]);
   const loadedDocumentIdRef = useRef<string | null>(null);
+  const hasAutoScaledRef = useRef(false);
   annotationsRef.current = annotations;
   pdfTextEditsRef.current = pdfTextEdits;
 
@@ -154,6 +154,7 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
       setPdfTextEdits(options?.pdfTextEdits ?? []);
       setDocumentId(options?.documentId ?? null);
       loadedDocumentIdRef.current = options?.documentId ?? null;
+      hasAutoScaledRef.current = false;
       setSavedBlob(null);
       setStatusMessage(null);
       resetHistory({
@@ -227,22 +228,6 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
   }, [selectedAnnotationId, commitHistory]);
 
   const resetEditor = () => {
-    setFile(null);
-    setPdfBytes(null);
-    setPdf(null);
-    setAnnotations([]);
-    setPageDimensions([]);
-    setCurrentPage(0);
-    setSelectedAnnotationId(null);
-    setEditingTextId(null);
-    setEditingPdfTextId(null);
-    setNewTextDraft(null);
-    setPdfTextEdits([]);
-    setDocumentId(null);
-    loadedDocumentIdRef.current = null;
-    setSavedBlob(null);
-    setStatusMessage(null);
-    resetHistory({ annotations: [], pdfTextEdits: [] });
     router.replace("/pdfeditor");
   };
 
@@ -404,8 +389,8 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
     }
   };
 
-  const handleDownload = async () => {
-    if (!file || !pdf || isDownloading) return;
+  const performDownload = async () => {
+    if (!file || !pdf) return;
     setIsDownloading(true);
     setStatusMessage(null);
     try {
@@ -413,6 +398,7 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
       const baseName = file.name.replace(/\.pdf$/i, "") || "document";
       downloadPdf(bytes, `${baseName}-edited.pdf`);
       setStatusMessage("Download started.");
+      setFeedbackDialogOpen(false);
     } catch (error) {
       setStatusMessage(
         error instanceof Error ? error.message : "Could not export PDF. Try again.",
@@ -422,9 +408,51 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
     }
   };
 
+  const handleDownload = () => {
+    if (!file || !pdf || isDownloading || savingFeedback) return;
+    setFeedbackDialogOpen(true);
+  };
+
+  const handleFeedbackSubmit = async (rating: number, comment: string) => {
+    if (!file) return;
+    setSavingFeedback(true);
+    try {
+      await submitDownloadFeedback({
+        rating,
+        comment,
+        documentId,
+        fileName: file.name,
+      });
+    } catch {
+      // Continue with download even if feedback storage fails.
+    } finally {
+      setSavingFeedback(false);
+    }
+    await performDownload();
+  };
+
+  const handleFeedbackSkip = () => {
+    void performDownload();
+  };
+
   useEffect(() => {
     setSavedBlob(null);
   }, [annotations, pdfTextEdits, scale]);
+
+  useEffect(() => {
+    if (hasAutoScaledRef.current) return;
+    const dims = pageDimensions[0];
+    if (!dims?.width) return;
+
+    const padding = 24;
+    const available = window.innerWidth - padding;
+    if (dims.width > available) {
+      setScale((prev) =>
+        Math.min(3, Math.max(0.5, prev * (available / dims.width))),
+      );
+    }
+    hasAutoScaledRef.current = true;
+  }, [pageDimensions]);
 
   useEffect(() => {
     if (!selectedAnnotationId) return;
@@ -508,9 +536,9 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
   }, [statusMessage]);
 
   useEffect(() => {
-    if (!initialDocumentId || !emailReady || !emailValid) return;
-    void loadStoredDocument(initialDocumentId);
-  }, [initialDocumentId, emailReady, emailValid, loadStoredDocument]);
+    if (!urlDocumentId || !emailReady || !emailValid) return;
+    void loadStoredDocument(urlDocumentId);
+  }, [urlDocumentId, emailReady, emailValid, loadStoredDocument]);
 
   if (!file || !pdf) {
     if (isLoadingDocument) {
@@ -531,7 +559,7 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
   const pageCount = pdf.numPages;
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-100">
+    <div className="flex min-h-0 flex-1 flex-col bg-zinc-100">
       <EmailSaveDialog
         open={saveDialogOpen}
         initialEmail={email}
@@ -541,6 +569,17 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
           if (!isSaving) setSaveDialogOpen(false);
         }}
         onConfirm={(saveEmail) => void performCloudSave(saveEmail)}
+      />
+
+      <DownloadFeedbackDialog
+        open={feedbackDialogOpen}
+        saving={savingFeedback}
+        downloading={isDownloading}
+        onClose={() => {
+          if (!savingFeedback && !isDownloading) setFeedbackDialogOpen(false);
+        }}
+        onSubmit={(rating, comment) => void handleFeedbackSubmit(rating, comment)}
+        onSkip={handleFeedbackSkip}
       />
 
       <PdfToolbar
@@ -576,11 +615,11 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
         </div>
       )}
 
-      <main className="flex-1 overflow-auto py-8">
-        <div className="mx-auto flex max-w-5xl flex-col items-center gap-2 px-12">
+      <main className="flex-1 overflow-auto py-3 sm:py-8">
+        <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-2 px-2 sm:px-6 lg:px-12">
           {Array.from({ length: pageCount }, (_, i) => (
-            <PdfPageCanvas
-              key={i}
+            <div key={i} className="w-full max-w-full overflow-x-auto">
+              <PdfPageCanvas
               ref={(handle) => {
                 pageCanvasRefs.current[i] = handle;
               }}
@@ -610,12 +649,13 @@ export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
               onApplyTextStyle={handleApplyTextStyle}
               onHistoryCommit={commitHistory}
             />
+            </div>
           ))}
         </div>
       </main>
 
-      <footer className="border-t border-zinc-200 bg-white px-4 py-2 text-center text-xs text-zinc-500">
-        <strong>Edit PDF</strong> tool: click existing document text to change it.
+      <footer className="hidden border-t border-zinc-200 bg-white px-4 py-2 text-center text-xs text-zinc-500 sm:block">
+        <strong>Edit PDF</strong> tool: tap existing document text to change it.
         Download to save all changes.
       </footer>
     </div>

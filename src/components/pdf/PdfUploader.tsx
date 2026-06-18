@@ -85,7 +85,7 @@ export function PdfUploader({ onFileSelect, onOpenDocument }: PdfUploaderProps) 
     });
 
   return (
-    <div className="flex flex-1 flex-col items-center gap-8 p-8">
+    <div className="flex flex-1 flex-col items-center gap-6 p-4 sm:gap-8 sm:p-8">
       <div
         role="button"
         tabIndex={0}
@@ -103,7 +103,7 @@ export function PdfUploader({ onFileSelect, onOpenDocument }: PdfUploaderProps) 
           handleFiles(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
-        className={`flex w-full max-w-lg cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-12 py-16 text-center transition-colors ${
+        className={`flex w-full max-w-lg cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-colors sm:px-12 sm:py-16 ${
           isDragging
             ? "border-indigo-500 bg-indigo-50"
             : "border-zinc-300 bg-white hover:border-indigo-400 hover:bg-zinc-50"
@@ -134,11 +134,11 @@ export function PdfUploader({ onFileSelect, onOpenDocument }: PdfUploaderProps) 
       </div>
 
       {storageConfigured && (
-        <section className="w-full max-w-2xl rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
+        <section className="w-full max-w-2xl rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <h3 className="font-semibold text-zinc-900">Saved documents</h3>
-              <p className="text-sm text-zinc-500">
+              <p className="truncate text-sm text-zinc-500">
                 {isValid
                   ? `PDFs saved for ${email}.`
                   : "Save a PDF with your email to see your documents here."}
@@ -147,7 +147,7 @@ export function PdfUploader({ onFileSelect, onOpenDocument }: PdfUploaderProps) 
             <button
               type="button"
               onClick={() => void refreshDocuments()}
-              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50"
+              className="shrink-0 self-start rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-50 sm:py-1.5"
             >
               Refresh
             </button>

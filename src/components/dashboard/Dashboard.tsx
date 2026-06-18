@@ -7,7 +7,7 @@ export function Dashboard() {
   return (
     <div className="min-h-full bg-zinc-50">
       <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
               Doc Editor
@@ -19,7 +19,7 @@ export function Dashboard() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-10">
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
         <section>
           <h2 className="text-lg font-semibold text-zinc-900">Tools</h2>
           <p className="mt-1 text-sm text-zinc-500">

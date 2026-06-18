@@ -45,7 +45,7 @@ export function EmailSaveDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
       onClick={() => {
         if (!saving) onClose();
       }}
@@ -54,7 +54,7 @@ export function EmailSaveDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="save-email-title"
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+        className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         <h2 id="save-email-title" className="text-lg font-semibold text-zinc-900">
@@ -94,19 +94,19 @@ export function EmailSaveDialog({
             </p>
           )}
 
-          <div className="mt-5 flex justify-end gap-2">
+          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button
               type="button"
               onClick={onClose}
               disabled={saving}
-              className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+              className="rounded-lg border border-zinc-200 px-4 py-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 sm:py-2"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!valid || saving}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-lg bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 sm:py-2"
             >
               {saving ? "Saving…" : "Save"}
             </button>
