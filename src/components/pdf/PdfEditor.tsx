@@ -1,13 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { EmailSaveDialog } from "./EmailSaveDialog";
 import { PdfUploader } from "./PdfUploader";
 import { PdfToolbar } from "./PdfToolbar";
-import { PdfPageCanvas } from "./PdfPageCanvas";
+import { PdfPageCanvas, type PdfPageCanvasHandle } from "./PdfPageCanvas";
 import { loadPdfDocument } from "@/lib/pdf/pdfjs";
-import { downloadPdf, exportPdfWithAnnotations } from "@/lib/pdf/exportPdf";
+import { downloadPdf } from "@/lib/pdf/exportPdf";
+import { exportPdfFromRenderedPages } from "@/lib/pdf/exportPdfCanvas";
+import { mergeExportPayload } from "@/lib/pdf/mergeExportPayload";
+import { arrayBufferToBase64, base64ToArrayBuffer } from "@/lib/pdf/base64";
+import {
+  createStoredDocument,
+  fetchDocumentById,
+  updateStoredDocument,
+} from "@/lib/api/documents";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
+import { useUserEmail } from "@/hooks/useUserEmail";
 import type {
   Annotation,
   EditTool,
@@ -16,7 +27,13 @@ import type {
 } from "@/types/annotations";
 import type { PdfTextEdit } from "@/types/pdfText";
 
-export function PdfEditor() {
+interface PdfEditorProps {
+  initialDocumentId?: string;
+}
+
+export function PdfEditor({ initialDocumentId }: PdfEditorProps) {
+  const router = useRouter();
+  const { email, setEmail, ready: emailReady, isValid: emailValid } = useUserEmail();
   const [file, setFile] = useState<File | null>(null);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -28,6 +45,9 @@ export function PdfEditor() {
   const [fontSize, setFontSize] = useState(16);
   const [scale, setScale] = useState(1.25);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveDialogError, setSaveDialogError] = useState<string | null>(null);
   const [savedBlob, setSavedBlob] = useState<Uint8Array | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(
@@ -37,9 +57,17 @@ export function PdfEditor() {
   const [editingPdfTextId, setEditingPdfTextId] = useState<string | null>(null);
   const [newTextDraft, setNewTextDraft] = useState<TextAnnotation | null>(null);
   const [pdfTextEdits, setPdfTextEdits] = useState<PdfTextEdit[]>([]);
+  const [documentId, setDocumentId] = useState<string | null>(
+    initialDocumentId ?? null,
+  );
+  const [isLoadingDocument, setIsLoadingDocument] = useState(
+    Boolean(initialDocumentId),
+  );
 
   const annotationsRef = useRef(annotations);
   const pdfTextEditsRef = useRef(pdfTextEdits);
+  const pageCanvasRefs = useRef<(PdfPageCanvasHandle | null)[]>([]);
+  const loadedDocumentIdRef = useRef<string | null>(null);
   annotationsRef.current = annotations;
   pdfTextEditsRef.current = pdfTextEdits;
 
@@ -100,24 +128,82 @@ export function PdfEditor() {
     annotations.find((a) => a.id === selectedAnnotationId) ??
     (newTextDraft?.id === selectedAnnotationId ? newTextDraft : undefined);
 
-  const loadFile = useCallback(async (selected: File) => {
-    const bytes = await selected.arrayBuffer();
-    const doc = await loadPdfDocument(bytes.slice(0));
-    setFile(selected);
-    setPdfBytes(bytes);
-    setPdf(doc);
-    setAnnotations([]);
-    setPageDimensions([]);
-    setCurrentPage(0);
-    setSelectedAnnotationId(null);
-    setEditingTextId(null);
-    setEditingPdfTextId(null);
-    setNewTextDraft(null);
-    setPdfTextEdits([]);
-    setSavedBlob(null);
-    setStatusMessage(null);
-    resetHistory({ annotations: [], pdfTextEdits: [] });
-  }, [resetHistory]);
+  const loadFromBytes = useCallback(
+    async (
+      bytes: ArrayBuffer,
+      name: string,
+      options?: {
+        documentId?: string | null;
+        annotations?: Annotation[];
+        pdfTextEdits?: PdfTextEdit[];
+        pageDimensions?: PageDimensions[];
+      },
+    ) => {
+      const doc = await loadPdfDocument(bytes.slice(0));
+      const pdfFile = new File([bytes], name, { type: "application/pdf" });
+      setFile(pdfFile);
+      setPdfBytes(bytes);
+      setPdf(doc);
+      setAnnotations(options?.annotations ?? []);
+      setPageDimensions(options?.pageDimensions ?? []);
+      setCurrentPage(0);
+      setSelectedAnnotationId(null);
+      setEditingTextId(null);
+      setEditingPdfTextId(null);
+      setNewTextDraft(null);
+      setPdfTextEdits(options?.pdfTextEdits ?? []);
+      setDocumentId(options?.documentId ?? null);
+      loadedDocumentIdRef.current = options?.documentId ?? null;
+      setSavedBlob(null);
+      setStatusMessage(null);
+      resetHistory({
+        annotations: options?.annotations ?? [],
+        pdfTextEdits: options?.pdfTextEdits ?? [],
+      });
+    },
+    [resetHistory],
+  );
+
+  const loadFile = useCallback(
+    async (selected: File) => {
+      const bytes = await selected.arrayBuffer();
+      await loadFromBytes(bytes, selected.name, { documentId: null });
+      router.replace("/pdfeditor");
+    },
+    [loadFromBytes, router],
+  );
+
+  const loadStoredDocument = useCallback(
+    async (id: string) => {
+      if (!emailValid) {
+        setStatusMessage("Save a PDF with your email first to open saved documents.");
+        return;
+      }
+      if (loadedDocumentIdRef.current === id && pdf) return;
+      setIsLoadingDocument(true);
+      setStatusMessage(null);
+      try {
+        const stored = await fetchDocumentById(id, email);
+        const bytes = base64ToArrayBuffer(stored.pdfBase64);
+        await loadFromBytes(bytes, stored.name, {
+          documentId: stored._id,
+          annotations: stored.annotations,
+          pdfTextEdits: stored.pdfTextEdits,
+          pageDimensions: stored.pageDimensions,
+        });
+        loadedDocumentIdRef.current = stored._id;
+        router.replace(`/pdfeditor?id=${stored._id}`);
+        setStatusMessage(`Opened "${stored.name}" from MongoDB.`);
+      } catch (error) {
+        setStatusMessage(
+          error instanceof Error ? error.message : "Could not open saved PDF",
+        );
+      } finally {
+        setIsLoadingDocument(false);
+      }
+    },
+    [email, emailValid, loadFromBytes, pdf, router],
+  );
 
   const handleDimensions = useCallback((pageIndex: number, dims: PageDimensions) => {
     setPageDimensions((prev) => {
@@ -152,9 +238,12 @@ export function PdfEditor() {
     setEditingPdfTextId(null);
     setNewTextDraft(null);
     setPdfTextEdits([]);
+    setDocumentId(null);
+    loadedDocumentIdRef.current = null;
     setSavedBlob(null);
     setStatusMessage(null);
     resetHistory({ annotations: [], pdfTextEdits: [] });
+    router.replace("/pdfeditor");
   };
 
   const handlePdfTextEdit = useCallback(
@@ -242,51 +331,94 @@ export function PdfEditor() {
     pdfTextEdits,
   });
 
-  const exportLocally = async (): Promise<Uint8Array> => {
-    if (!pdfBytes) throw new Error("No PDF loaded");
-    return exportPdfWithAnnotations(pdfBytes, buildExportPayload());
+  const collectExportPayload = () => {
+    const flushes = pageCanvasRefs.current
+      .filter((ref): ref is PdfPageCanvasHandle => ref != null)
+      .map((ref) => ref.flushPendingEdits());
+    return mergeExportPayload(buildExportPayload(), flushes);
   };
 
-  const handleSave = async () => {
+  const exportLocally = async (): Promise<Uint8Array> => {
+    if (!pdf) throw new Error("No PDF loaded");
+    const payload = collectExportPayload();
+    return exportPdfFromRenderedPages(pdf, payload, Math.max(scale, 2));
+  };
+
+  const handleSave = () => {
     if (!file || !pdfBytes) return;
+    setSaveDialogError(null);
+    setSaveDialogOpen(true);
+  };
+
+  const performCloudSave = async (saveEmail: string) => {
+    if (!file || !pdfBytes) return;
+    setEmail(saveEmail);
     setIsSaving(true);
+    setSaveDialogError(null);
     setStatusMessage(null);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("annotations", JSON.stringify(buildExportPayload()));
+      const payload = collectExportPayload();
+      const pdfBase64 = arrayBufferToBase64(pdfBytes);
 
-      const response = await fetch("/api/pdf/export", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error ?? "Save failed");
+      if (documentId) {
+        await updateStoredDocument(documentId, saveEmail, {
+          name: file.name,
+          annotations: payload.annotations,
+          pdfTextEdits: payload.pdfTextEdits,
+          pageDimensions: payload.pageDimensions,
+        });
+        setStatusMessage("Document saved.");
+      } else {
+        const stored = await createStoredDocument({
+          email: saveEmail,
+          name: file.name,
+          pdfBase64,
+          annotations: payload.annotations,
+          pdfTextEdits: payload.pdfTextEdits,
+          pageDimensions: payload.pageDimensions,
+        });
+        setDocumentId(stored._id);
+        router.replace(`/pdfeditor?id=${stored._id}`);
+        setStatusMessage("Document saved.");
       }
 
-      const buffer = await response.arrayBuffer();
-      setSavedBlob(new Uint8Array(buffer));
-      setStatusMessage("Changes saved. Download when ready.");
-    } catch {
       const bytes = await exportLocally();
       setSavedBlob(bytes);
-      setStatusMessage("Saved locally (server unavailable).");
+      setSaveDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.includes("MONGODB_URI")
+          ? "Cloud save is not set up. Download your PDF instead."
+          : error instanceof Error
+            ? error.message
+            : "Save failed";
+      setSaveDialogError(message);
+      try {
+        const bytes = await exportLocally();
+        setSavedBlob(bytes);
+      } catch {
+        // ignore local export failure
+      }
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDownload = async () => {
-    if (!file || !pdfBytes) return;
+    if (!file || !pdf || isDownloading) return;
+    setIsDownloading(true);
+    setStatusMessage(null);
     try {
       const bytes = await exportLocally();
       const baseName = file.name.replace(/\.pdf$/i, "") || "document";
       downloadPdf(bytes, `${baseName}-edited.pdf`);
       setStatusMessage("Download started.");
-    } catch {
-      setStatusMessage("Could not export PDF. Try again.");
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error ? error.message : "Could not export PDF. Try again.",
+      );
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -375,14 +507,42 @@ export function PdfEditor() {
     return () => clearTimeout(timer);
   }, [statusMessage]);
 
+  useEffect(() => {
+    if (!initialDocumentId || !emailReady || !emailValid) return;
+    void loadStoredDocument(initialDocumentId);
+  }, [initialDocumentId, emailReady, emailValid, loadStoredDocument]);
+
   if (!file || !pdf) {
-    return <PdfUploader onFileSelect={loadFile} />;
+    if (isLoadingDocument) {
+      return (
+        <div className="flex flex-1 items-center justify-center p-8 text-sm text-zinc-500">
+          Loading PDF from MongoDB…
+        </div>
+      );
+    }
+    return (
+      <PdfUploader
+        onFileSelect={loadFile}
+        onOpenDocument={(id) => void loadStoredDocument(id)}
+      />
+    );
   }
 
   const pageCount = pdf.numPages;
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-100">
+      <EmailSaveDialog
+        open={saveDialogOpen}
+        initialEmail={email}
+        saving={isSaving}
+        error={saveDialogError}
+        onClose={() => {
+          if (!isSaving) setSaveDialogOpen(false);
+        }}
+        onConfirm={(saveEmail) => void performCloudSave(saveEmail)}
+      />
+
       <PdfToolbar
         tool={tool}
         onToolChange={setTool}
@@ -400,6 +560,7 @@ export function PdfEditor() {
         onSave={handleSave}
         onDownload={handleDownload}
         isSaving={isSaving}
+        isDownloading={isDownloading}
         selectedAnnotation={selectedAnnotation ?? null}
         onEditSelectedText={handleEditSelectedText}
         onDeleteSelected={deleteSelectedAnnotation}
@@ -420,6 +581,9 @@ export function PdfEditor() {
           {Array.from({ length: pageCount }, (_, i) => (
             <PdfPageCanvas
               key={i}
+              ref={(handle) => {
+                pageCanvasRefs.current[i] = handle;
+              }}
               pdf={pdf}
               pageIndex={i}
               scale={scale}

@@ -17,6 +17,7 @@ import { PdfNativeTextFormatBar } from "./PdfNativeTextFormatBar";
 export interface PdfNativeTextInputHandle {
   commit: () => void;
   cancel: () => void;
+  getDraft: () => PdfNativeTextDraft;
 }
 
 interface PdfNativeTextInputProps {
@@ -100,7 +101,11 @@ export const PdfNativeTextInput = forwardRef<
     onCancel();
   }, [onCancel]);
 
-  useImperativeHandle(ref, () => ({ commit, cancel }), [commit, cancel]);
+  useImperativeHandle(ref, () => ({
+    commit,
+    cancel,
+    getDraft: () => draft,
+  }), [commit, cancel, draft]);
 
   useEffect(() => {
     onCoverWidthChange?.(editorWidth);

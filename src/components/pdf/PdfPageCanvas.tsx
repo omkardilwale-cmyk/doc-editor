@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from "react";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { v4 as uuid } from "uuid";
 import { renderPageToCanvas } from "@/lib/pdf/pdfjs";
@@ -23,11 +23,13 @@ import {
   hitTestPdfTextItem,
   measureCanvasTextWidth,
 } from "@/lib/pdf/extractPdfText";
-import { inheritTextPlacementFromPdf } from "@/lib/pdf/textStyle";
+import { createPdfTextEdit } from "@/lib/pdf/createPdfTextEdit";
+import type { PageExportFlush } from "@/lib/pdf/mergeExportPayload";
 import { editStyleFromItem } from "@/lib/pdf/pdfTextStyle";
 import { inputTopFromBaseline } from "@/lib/pdf/pdfTextFont";
 import { sampleTextColorFromCanvas } from "@/lib/pdf/sampleTextColor";
-import { TextAnnotationOverlay } from "./TextAnnotationOverlay";
+import { inheritTextPlacementFromPdf } from "@/lib/pdf/textStyle";
+import { TextAnnotationOverlay, type TextAnnotationOverlayHandle } from "./TextAnnotationOverlay";
 import {
   PdfNativeTextInput,
   type PdfNativeTextInputHandle,
@@ -81,33 +83,41 @@ interface PdfPageCanvasProps {
   onHistoryCommit: () => void;
 }
 
-export function PdfPageCanvas({
-  pdf,
-  pageIndex,
-  scale,
-  tool,
-  color,
-  fontSize,
-  annotations,
-  onAnnotationsChange,
-  onDimensions,
-  isActive,
-  onActivatePage,
-  selectedAnnotationId,
-  onSelectAnnotation,
-  onUpdateAnnotation,
-  editingTextId,
-  onEditingTextIdChange,
-  newTextDraft,
-  onNewTextDraftChange,
-  pdfTextEdits,
-  onPdfTextEdit,
-  editingPdfTextId,
-  onEditingPdfTextIdChange,
-  pageDimensions,
-  onApplyTextStyle,
-  onHistoryCommit,
-}: PdfPageCanvasProps) {
+export interface PdfPageCanvasHandle {
+  flushPendingEdits: () => PageExportFlush;
+}
+
+export const PdfPageCanvas = forwardRef<PdfPageCanvasHandle, PdfPageCanvasProps>(
+  function PdfPageCanvas(
+  {
+    pdf,
+    pageIndex,
+    scale,
+    tool,
+    color,
+    fontSize,
+    annotations,
+    onAnnotationsChange,
+    onDimensions,
+    isActive,
+    onActivatePage,
+    selectedAnnotationId,
+    onSelectAnnotation,
+    onUpdateAnnotation,
+    editingTextId,
+    onEditingTextIdChange,
+    newTextDraft,
+    onNewTextDraftChange,
+    pdfTextEdits,
+    onPdfTextEdit,
+    editingPdfTextId,
+    onEditingPdfTextIdChange,
+    pageDimensions,
+    onApplyTextStyle,
+    onHistoryCommit,
+  },
+  ref,
+) {
   const pdfCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -132,6 +142,7 @@ export function PdfPageCanvas({
   const [activePdfTextEditItem, setActivePdfTextEditItem] =
     useState<PdfTextItem | null>(null);
   const pdfTextEditRef = useRef<PdfNativeTextInputHandle>(null);
+  const textOverlayRef = useRef<TextAnnotationOverlayHandle>(null);
   const pdfTextEditSessionRef = useRef<{
     canvasFontSize: number;
     pdfFontSize: number;
@@ -379,6 +390,58 @@ export function PdfPageCanvas({
     pdfTextEditRef.current?.commit();
   }, []);
 
+  const flushPendingEdits = useCallback((): PageExportFlush => {
+    const result: PageExportFlush = {
+      pdfTextEdits: [],
+      annotations: [],
+      removedAnnotationIds: [],
+    };
+
+    if (editingPdfItem && editingPdfTextId && pdfTextEditRef.current) {
+      const built = createPdfTextEdit(
+        editingPdfItem,
+        pdfTextEditRef.current.getDraft(),
+        pageIndex,
+        pageDimensions,
+        pdfTextEdits,
+        pdfTextEditSessionRef.current,
+      );
+      pdfTextEditRef.current.commit();
+      if (built && !built.isUnchanged) {
+        result.pdfTextEdits.push(built.edit);
+      }
+    }
+
+    if (editingAnnotation && editingTextId && !editingPdfTextId && textOverlayRef.current) {
+      const text = textOverlayRef.current.getValue();
+      textOverlayRef.current.commit();
+      const trimmed = text.trim();
+      const existing = annotations.find((a) => a.id === editingTextId);
+
+      if (!trimmed) {
+        if (existing) result.removedAnnotationIds.push(editingTextId);
+      } else if (existing?.type === "text") {
+        result.annotations.push(updateTextContent(existing, trimmed));
+      } else if (newTextDraft?.id === editingTextId) {
+        result.annotations.push(updateTextContent(newTextDraft, trimmed));
+      }
+    }
+
+    return result;
+  }, [
+    annotations,
+    editingAnnotation,
+    editingPdfItem,
+    editingPdfTextId,
+    editingTextId,
+    newTextDraft,
+    pageDimensions,
+    pageIndex,
+    pdfTextEdits,
+  ]);
+
+  useImperativeHandle(ref, () => ({ flushPendingEdits }), [flushPendingEdits]);
+
   const handlePdfTextDraftChange = useCallback(
     (draft: PdfNativeTextDraft) => {
       setActivePdfTextEditItem((prev) => {
@@ -426,68 +489,26 @@ export function PdfPageCanvas({
       return;
     }
 
-    const existingEdit = pdfTextEdits.find((e) => e.itemId === editingPdfItem.id);
-    const originalStyle = editStyleFromItem(
-      { ...editingPdfItem, text: editingPdfItem.sourceText },
-      undefined,
+    const built = createPdfTextEdit(
+      editingPdfItem,
+      draft,
+      pageIndex,
+      pageDimensions,
+      pdfTextEdits,
+      pdfTextEditSessionRef.current,
     );
+    if (!built) {
+      setActivePdfTextEditItem(null);
+      pdfTextEditSessionRef.current = null;
+      onEditingPdfTextIdChange(null);
+      return;
+    }
+
+    const { edit, isUnchanged } = built;
     const fontMetrics = {
       fontFamily: editingPdfItem.fontFamily,
       fontBold: draft.fontBold,
       fontItalic: draft.fontItalic,
-    };
-    const session = pdfTextEditSessionRef.current;
-    const baseCanvasFontSize =
-      session?.canvasFontSize ?? editingPdfItem.fontSize;
-    const basePdfFontSize = session?.pdfFontSize ?? editingPdfItem.pdfFontSize;
-    const fontScale = draft.fontSize / baseCanvasFontSize;
-    const coverWidth = Math.max(
-      editingPdfItem.sourceWidth,
-      measureCanvasTextWidth(trimmed, draft.fontSize, fontMetrics),
-      existingEdit?.canvasCoverWidth ?? 0,
-    );
-    const pdfCoverWidth = Math.max(
-      editingPdfItem.pdfWidth,
-      measureCanvasTextWidth(
-        trimmed,
-        basePdfFontSize * fontScale,
-        fontMetrics,
-      ),
-      existingEdit?.pdfCoverWidth ?? editingPdfItem.pdfWidth,
-    );
-
-    const isUnchanged =
-      trimmed === editingPdfItem.sourceText &&
-      draft.color === (originalStyle.color ?? "#111827") &&
-      Math.round(draft.fontSize) === Math.round(baseCanvasFontSize) &&
-      draft.fontBold === originalStyle.fontBold &&
-      draft.fontItalic === originalStyle.fontItalic;
-
-    const edit: PdfTextEdit = {
-      itemId: editingPdfItem.id,
-      pageIndex,
-      originalText: editingPdfItem.sourceText,
-      newText: trimmed,
-      color: draft.color,
-      fontFamily: editingPdfItem.fontFamily,
-      fontBold: draft.fontBold,
-      fontItalic: draft.fontItalic,
-      ascent: editingPdfItem.ascent,
-      descent: editingPdfItem.descent,
-      pdfX: editingPdfItem.pdfX,
-      pdfBaselineY: editingPdfItem.pdfBaselineY,
-      pdfFontSize: basePdfFontSize * fontScale,
-      pdfWidth: editingPdfItem.pdfWidth,
-      pdfHeight: editingPdfItem.pdfHeight,
-      canvasX: editingPdfItem.x,
-      canvasY: editingPdfItem.y,
-      canvasWidth: editingPdfItem.sourceWidth,
-      canvasHeight: draft.fontSize * 1.05,
-      canvasFontSize: draft.fontSize,
-      canvasBaselineY: editingPdfItem.canvasBaselineY,
-      canvasViewportWidth: pageDimensions?.width ?? editingPdfItem.width,
-      canvasCoverWidth: coverWidth,
-      pdfCoverWidth,
     };
 
     const nextEdits = isUnchanged
@@ -968,6 +989,7 @@ export function PdfPageCanvas({
         )}
         {editingAnnotation && !editingPdfTextId && (
           <TextAnnotationOverlay
+            ref={textOverlayRef}
             key={editingAnnotation.id}
             annotation={editingAnnotation}
             isEditing
@@ -1001,4 +1023,4 @@ export function PdfPageCanvas({
       </div>
     </div>
   );
-}
+});

@@ -247,17 +247,14 @@ export async function exportPdfWithAnnotations(
 }
 
 export function downloadPdf(bytes: Uint8Array, filename: string) {
-  const buffer = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-  const blob = new Blob([buffer], {
-    type: "application/pdf",
-  });
+  const copy = new Uint8Array(bytes);
+  const blob = new Blob([copy], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

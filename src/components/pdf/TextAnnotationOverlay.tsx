@@ -1,8 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { measureCanvasTextWidth } from "@/lib/pdf/extractPdfText";
 import type { TextAnnotation } from "@/types/annotations";
+
+export interface TextAnnotationOverlayHandle {
+  getValue: () => string;
+  commit: () => void;
+}
 
 interface TextAnnotationOverlayProps {
   annotation: TextAnnotation;
@@ -15,15 +26,21 @@ interface TextAnnotationOverlayProps {
   onPositionCommit?: () => void;
 }
 
-export function TextAnnotationOverlay({
-  annotation,
-  isEditing = false,
-  isNew = false,
-  onCommit,
-  onCancel,
-  onPositionChange,
-  onPositionCommit,
-}: TextAnnotationOverlayProps) {
+export const TextAnnotationOverlay = forwardRef<
+  TextAnnotationOverlayHandle,
+  TextAnnotationOverlayProps
+>(function TextAnnotationOverlay(
+  {
+    annotation,
+    isEditing = false,
+    isNew = false,
+    onCommit,
+    onCancel,
+    onPositionChange,
+    onPositionCommit,
+  },
+  ref,
+) {
   const inputRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
@@ -67,6 +84,11 @@ export function TextAnnotationOverlay({
     committedRef.current = true;
     onCancel();
   };
+
+  useImperativeHandle(ref, () => ({
+    getValue: () => value,
+    commit,
+  }), [commit, value]);
 
   const handleDragPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
@@ -183,4 +205,4 @@ export function TextAnnotationOverlay({
       </div>
     </div>
   );
-}
+});

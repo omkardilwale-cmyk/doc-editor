@@ -92,6 +92,7 @@ interface PdfToolbarProps {
   onSave: () => void;
   onDownload: () => void;
   isSaving: boolean;
+  isDownloading?: boolean;
   selectedAnnotation: Annotation | null;
   onEditSelectedText: () => void;
   onDeleteSelected: () => void;
@@ -118,6 +119,7 @@ export function PdfToolbar({
   onSave,
   onDownload,
   isSaving,
+  isDownloading = false,
   selectedAnnotation,
   onEditSelectedText,
   onDeleteSelected,
@@ -292,9 +294,10 @@ export function PdfToolbar({
           <button
             type="button"
             onClick={onDownload}
-            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+            disabled={isDownloading}
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
           >
-            Download
+            {isDownloading ? "Preparing…" : "Download"}
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AppNavBar } from "@/components/layout/AppNavBar";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Doc Editor — PDF Editor",
-  description: "Upload, edit, save, and download PDF documents in your browser.",
+  title: "Doc Editor",
+  description: "Browser-based document tools for editing PDFs and more.",
 };
 
 export default function RootLayout({
@@ -27,7 +28,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <AppNavBar />
+        {children}
+      </body>
     </html>
   );
 }
