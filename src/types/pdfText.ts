@@ -13,6 +13,13 @@ export interface PdfTextItem {
   width: number;
   height: number;
   fontSize: number;
+  fontFamily: string;
+  fontBold: boolean;
+  fontItalic: boolean;
+  ascent: number;
+  descent: number;
+  /** Sampled or preserved text color. */
+  color?: string;
   /** Canvas baseline Y (where glyphs sit). */
   canvasBaselineY: number;
   /** PDF X (points, origin bottom-left). */
@@ -29,6 +36,12 @@ export interface PdfTextEdit {
   pageIndex: number;
   originalText: string;
   newText: string;
+  color?: string;
+  fontFamily?: string;
+  fontBold?: boolean;
+  fontItalic?: boolean;
+  ascent?: number;
+  descent?: number;
   pdfX: number;
   pdfBaselineY: number;
   pdfFontSize: number;

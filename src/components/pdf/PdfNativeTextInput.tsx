@@ -22,9 +22,15 @@ export function PdfNativeTextInput({
   const mountTimeRef = useRef(Date.now());
   const [value, setValue] = useState(text);
 
-  const textWidth = measureCanvasTextWidth(value || " ", item.fontSize);
-  const originalWidth = item.width;
-  const inputWidth = Math.max(textWidth + 6, originalWidth, item.fontSize);
+  const fontMetrics = {
+    fontFamily: item.fontFamily,
+    fontBold: item.fontBold,
+    fontItalic: item.fontItalic,
+  };
+  const textWidth = measureCanvasTextWidth(value || " ", item.fontSize, fontMetrics);
+  const inputWidth = Math.max(textWidth + 6, item.width, item.fontSize);
+  const lineHeight = item.fontSize * (item.ascent - item.descent);
+  const textColor = item.color ?? "#111827";
 
   useEffect(() => {
     const input = inputRef.current;
@@ -55,20 +61,23 @@ export function PdfNativeTextInput({
       type="text"
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      className="absolute z-30 m-0 rounded-sm bg-white p-0 shadow-sm outline outline-2 outline-indigo-500"
+      className="absolute z-30 m-0 rounded-sm bg-transparent p-0 caret-current outline outline-1 outline-indigo-400/70 focus:outline-2 focus:outline-indigo-500"
       style={{
         left: item.x,
         top: item.y,
         width: inputWidth,
         height: item.height,
         fontSize: item.fontSize,
-        lineHeight: `${item.fontSize}px`,
-        color: "#111827",
-        fontFamily: "sans-serif",
+        lineHeight: `${lineHeight}px`,
+        color: textColor,
+        fontFamily: item.fontFamily,
+        fontWeight: item.fontBold ? "bold" : "normal",
+        fontStyle: item.fontItalic ? "italic" : "normal",
         boxSizing: "content-box",
         padding: 0,
         margin: 0,
         border: "none",
+        background: "transparent",
       }}
       onMouseDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}

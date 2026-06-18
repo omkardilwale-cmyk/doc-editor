@@ -1,5 +1,6 @@
 import type { PdfTextEdit } from "@/types/pdfText";
 import type { PageDimensions } from "@/types/annotations";
+import { buildCanvasFontCss } from "@/lib/pdf/pdfTextFont";
 
 export function getEditCanvasBounds(
   edit: PdfTextEdit,
@@ -9,7 +10,8 @@ export function getEditCanvasBounds(
   const fontSize = edit.canvasFontSize * ratio;
   const x = edit.canvasX * ratio;
   const baselineY = edit.canvasBaselineY * ratio;
-  const topY = baselineY - fontSize;
+  const ascent = edit.ascent ?? 0.75;
+  const topY = baselineY - fontSize * ascent;
   const width = edit.canvasCoverWidth * ratio;
   const height = edit.canvasHeight * ratio;
 
@@ -32,8 +34,12 @@ export function paintPdfTextEditOnContext(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(x - 1, topY - 1, width + 2, height + 2);
 
-  ctx.font = `${fontSize}px sans-serif`;
-  ctx.fillStyle = "#111827";
+  ctx.font = buildCanvasFontCss(fontSize, {
+    fontFamily: edit.fontFamily ?? "sans-serif",
+    fontBold: edit.fontBold ?? false,
+    fontItalic: edit.fontItalic ?? false,
+  });
+  ctx.fillStyle = edit.color || "#111827";
   ctx.fillText(edit.newText, x, baselineY);
 }
 

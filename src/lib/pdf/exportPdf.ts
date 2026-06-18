@@ -7,6 +7,7 @@ import type {
   TextAnnotation,
 } from "@/types/annotations";
 import type { PdfTextEdit } from "@/types/pdfText";
+import { pdfLibFontKey } from "@/lib/pdf/pdfTextFont";
 
 function hexToRgb(hex: string): RGB {
   const normalized = hex.replace("#", "");
@@ -142,7 +143,9 @@ function applyPdfTextEdit(
   const textWidth = font.widthOfTextAtSize(edit.newText, edit.pdfFontSize);
   const coverWidth =
     Math.max(edit.pdfWidth, textWidth, edit.pdfCoverWidth ?? edit.pdfWidth) + 4;
-  const coverHeight = edit.pdfFontSize * 1.2 + 4;
+  const ascent = edit.ascent ?? 0.75;
+  const descent = edit.descent ?? 0.25;
+  const coverHeight = edit.pdfFontSize * (ascent - descent) + 4;
 
   page.drawRectangle({
     x: edit.pdfX - 2,
@@ -158,8 +161,45 @@ function applyPdfTextEdit(
     y: edit.pdfBaselineY,
     size: edit.pdfFontSize,
     font,
-    color: rgb(0, 0, 0),
+    color: edit.color ? hexToRgb(edit.color) : rgb(0, 0, 0),
   });
+}
+
+const STANDARD_FONT_MAP: Record<string, StandardFonts> = {
+  helvetica: StandardFonts.Helvetica,
+  "helvetica-bold": StandardFonts.HelveticaBold,
+  "helvetica-italic": StandardFonts.HelveticaOblique,
+  "helvetica-bold-italic": StandardFonts.HelveticaBoldOblique,
+  times: StandardFonts.TimesRoman,
+  "times-bold": StandardFonts.TimesRomanBold,
+  "times-italic": StandardFonts.TimesRomanItalic,
+  "times-bold-italic": StandardFonts.TimesRomanBoldItalic,
+  courier: StandardFonts.Courier,
+  "courier-bold": StandardFonts.CourierBold,
+  "courier-italic": StandardFonts.CourierOblique,
+  "courier-bold-italic": StandardFonts.CourierBoldOblique,
+};
+
+async function getEditFont(
+  pdfDoc: PDFDocument,
+  cache: Map<string, PDFFont>,
+  edit: PdfTextEdit,
+): Promise<PDFFont> {
+  const key = pdfLibFontKey({
+    fontFamily: edit.fontFamily ?? "sans-serif",
+    fontBold: edit.fontBold ?? false,
+    fontItalic: edit.fontItalic ?? false,
+    ascent: edit.ascent ?? 0.75,
+    descent: edit.descent ?? 0.25,
+  });
+
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const standard = STANDARD_FONT_MAP[key] ?? StandardFonts.Helvetica;
+  const font = await pdfDoc.embedFont(standard);
+  cache.set(key, font);
+  return font;
 }
 
 export async function exportPdfWithAnnotations(
@@ -168,12 +208,13 @@ export async function exportPdfWithAnnotations(
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const pages = pdfDoc.getPages();
-  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontCache = new Map<string, PDFFont>();
 
   for (const edit of pdfTextEdits) {
     const page = pages[edit.pageIndex];
     if (!page) continue;
-    applyPdfTextEdit(page, edit, helvetica);
+    const font = await getEditFont(pdfDoc, fontCache, edit);
+    applyPdfTextEdit(page, edit, font);
   }
 
   for (const annotation of annotations) {

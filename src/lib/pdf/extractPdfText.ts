@@ -1,14 +1,29 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { PdfTextItem } from "@/types/pdfText";
+import {
+  buildCanvasFontCss,
+  resolvePdfFontStyle,
+  textBoxMetrics,
+  topFromBaseline,
+  type PdfFontStyle,
+} from "@/lib/pdf/pdfTextFont";
 
-export function measureCanvasTextWidth(text: string, fontSize: number): number {
+export function measureCanvasTextWidth(
+  text: string,
+  fontSize: number,
+  font?: Pick<PdfFontStyle, "fontFamily" | "fontBold" | "fontItalic">,
+): number {
   if (typeof document === "undefined") {
     return text.length * fontSize * 0.55;
   }
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) return text.length * fontSize * 0.55;
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = buildCanvasFontCss(fontSize, {
+    fontFamily: font?.fontFamily ?? "sans-serif",
+    fontBold: font?.fontBold ?? false,
+    fontItalic: font?.fontItalic ?? false,
+  });
   return ctx.measureText(text || " ").width;
 }
 
@@ -38,13 +53,24 @@ export async function extractPageTextItems(
     const pdfFontSize = Math.hypot(pdfTx[0], pdfTx[1]) || fontSize;
     const baselineY = canvasTx[5];
     const x = canvasTx[4];
-    const y = baselineY - fontSize;
-    const height = fontSize * 1.2;
+
+    const fontStyle = resolvePdfFontStyle(
+      "fontName" in item ? String(item.fontName) : undefined,
+      textContent.styles ?? {},
+    );
+    const { height } = textBoxMetrics(fontSize, fontStyle);
+    const y = topFromBaseline(baselineY, fontSize, fontStyle);
+    const pdfHeight = pdfFontSize * (fontStyle.ascent - fontStyle.descent);
+
+    const fontMetrics = {
+      fontFamily: fontStyle.fontFamily,
+      fontBold: fontStyle.fontBold,
+      fontItalic: fontStyle.fontItalic,
+    };
     const pdfWidth = item.width || text.length * pdfFontSize * 0.55;
-    const pdfHeight = pdfFontSize * 1.2;
     const width = Math.max(
       (item.width ?? 0) * scale,
-      measureCanvasTextWidth(text, fontSize),
+      measureCanvasTextWidth(text, fontSize, fontMetrics),
     );
 
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(height)) {
@@ -62,6 +88,11 @@ export async function extractPageTextItems(
       width,
       height,
       fontSize,
+      fontFamily: fontStyle.fontFamily,
+      fontBold: fontStyle.fontBold,
+      fontItalic: fontStyle.fontItalic,
+      ascent: fontStyle.ascent,
+      descent: fontStyle.descent,
       canvasBaselineY: baselineY,
       pdfX: pdfTx[4],
       pdfBaselineY: pdfTx[5],
